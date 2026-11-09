@@ -602,8 +602,10 @@ export const BuyerDashboard = () => {
               ...b,
               paidAmount: currentPaid,
               paymentPercentage: updatedPct,
-              bookingStatus: currentPaid >= agrVal ? 'Fully Paid & Allotted' : 'Confirmed (Token Paid)',
-              allotmentStatus: currentPaid >= agrVal ? 'Letter Issued' : b.allotmentStatus
+              bookingStatus: currentPaid >= agrVal
+                ? 'Fully Paid & Allotted'
+                : (currentPaid >= (agrVal * 0.10) ? 'Confirmed (10% Advance Paid)' : 'Confirmed (Token Paid)'),
+              allotmentStatus: (currentPaid >= (agrVal * 0.10) || currentPaid >= agrVal) ? 'Letter Issued' : b.allotmentStatus
             } : b)));
           }
 
@@ -2934,12 +2936,20 @@ export const BuyerDashboard = () => {
                       </span>
                     </div>
 
-                    <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                       {[
                         { amount: 50000, label: 'Token (₹50k)' },
                         { amount: 100000, label: 'Priority (₹1L)' },
-                        { amount: 850000, label: '10% Advance' },
-                        { amount: remainingBeforePay > 0 ? remainingBeforePay : 8500000, label: 'Full Balance' }
+                        {
+                          amount: Math.round(u.price * 0.10) > previouslyPaid
+                            ? Math.max(50000, Math.round(u.price * 0.10) - previouslyPaid)
+                            : Math.round(u.price * 0.10),
+                          label: '10% Advance'
+                        },
+                        {
+                          amount: remainingBeforePay > 0 ? remainingBeforePay : u.price,
+                          label: 'Full Balance'
+                        }
                       ].map((tier, idx) => (
                         <button
                           key={idx}

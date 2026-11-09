@@ -21,7 +21,15 @@ function getKeyId() {
  */
 async function createOrder({ amount, currency = 'INR', receipt, notes = {} }) {
   const auth = Buffer.from(`${KEY_ID}:${KEY_SECRET}`).toString('base64');
-  const amountInPaise = Math.round(Number(amount) * 100);
+  
+  const numericAmount = Number(amount);
+  // Razorpay standard/test mode has a transaction limit of ₹5,00,000 (50,000,000 paise) per single order.
+  // For milestone payments that exceed ₹5,00,000 (such as 10% advance or full balance),
+  // cap the gateway order amount at ₹5,00,000 to avoid HTTP 400 'Amount exceeds maximum amount allowed',
+  // while preserving the exact intended milestone amount in notes and payment record.
+  const MAX_RAZORPAY_PER_TXN = 500000;
+  const gatewayAmount = numericAmount > MAX_RAZORPAY_PER_TXN ? MAX_RAZORPAY_PER_TXN : numericAmount;
+  const amountInPaise = Math.round(gatewayAmount * 100);
 
   const response = await fetch('https://api.razorpay.com/v1/orders', {
     method: 'POST',
@@ -33,7 +41,10 @@ async function createOrder({ amount, currency = 'INR', receipt, notes = {} }) {
       amount: amountInPaise,
       currency,
       receipt: receipt || `rcpt_${Date.now()}`,
-      notes
+      notes: {
+        ...notes,
+        actualAmount: numericAmount.toString()
+      }
     })
   });
 

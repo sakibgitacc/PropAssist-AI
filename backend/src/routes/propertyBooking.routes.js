@@ -46,15 +46,18 @@ router.post('/', authenticateToken, async (req, res) => {
       const newPaid = Number(existingBuyerBooking.paidAmount || 0) + Number(tokenAmount || 0);
       const agrVal = Number(existingBuyerBooking.agreementValue || agreementValue || 8500000);
       const isFullyPaid = newPaid >= agrVal;
+      const hasTenPercent = newPaid >= (agrVal * 0.10);
 
       const updateData = {
         paidAmount: newPaid,
         paymentPercentage: Math.min(100, Number(((newPaid / agrVal) * 100).toFixed(2))),
-        bookingStatus: isFullyPaid ? 'Fully Paid & Allotted' : 'Confirmed (Token Paid)',
-        allotmentStatus: isFullyPaid ? 'Letter Issued' : 'Under Approval'
+        bookingStatus: isFullyPaid
+          ? 'Fully Paid & Allotted'
+          : (hasTenPercent ? 'Confirmed (10% Advance Paid)' : 'Confirmed (Token Paid)'),
+        allotmentStatus: (isFullyPaid || hasTenPercent) ? 'Letter Issued' : 'Under Approval'
       };
 
-      if (isFullyPaid) {
+      if (isFullyPaid || hasTenPercent) {
         updateData.allotmentLetterNo = existingBuyerBooking.allotmentLetterNo || `ALT-GJ-2026-${Date.now().toString().slice(-6)}`;
         updateData.allotmentDate = new Date().toLocaleDateString('en-IN', { dateStyle: 'long' });
       }
@@ -127,10 +130,12 @@ router.post('/', authenticateToken, async (req, res) => {
         agreementValue: Number(agreementValue),
         paidAmount: Number(tokenAmount),
         paymentPercentage: Math.min(100, Number(((Number(tokenAmount) / Number(agreementValue)) * 100).toFixed(2))),
-        bookingStatus: isFullyPaid ? 'Fully Paid & Allotted' : 'Confirmed (Token Paid)',
-        allotmentStatus: isFullyPaid ? 'Letter Issued' : 'Under Approval',
-        allotmentLetterNo: isFullyPaid ? `ALT-GJ-2026-${Date.now().toString().slice(-6)}` : null,
-        allotmentDate: isFullyPaid ? new Date().toLocaleDateString('en-IN', { dateStyle: 'long' }) : null,
+        bookingStatus: isFullyPaid
+          ? 'Fully Paid & Allotted'
+          : (Number(tokenAmount) >= (Number(agreementValue) * 0.10) ? 'Confirmed (10% Advance Paid)' : 'Confirmed (Token Paid)'),
+        allotmentStatus: (isFullyPaid || Number(tokenAmount) >= (Number(agreementValue) * 0.10)) ? 'Letter Issued' : 'Under Approval',
+        allotmentLetterNo: (isFullyPaid || Number(tokenAmount) >= (Number(agreementValue) * 0.10)) ? `ALT-GJ-2026-${Date.now().toString().slice(-6)}` : null,
+        allotmentDate: (isFullyPaid || Number(tokenAmount) >= (Number(agreementValue) * 0.10)) ? new Date().toLocaleDateString('en-IN', { dateStyle: 'long' }) : null,
         reraNumber: targetUnit.project?.reraNumber || 'PR/GJ/AHMEDABAD/AUDA/RAA10022/2026'
       },
       include: {

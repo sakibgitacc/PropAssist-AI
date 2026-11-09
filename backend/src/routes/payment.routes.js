@@ -12,7 +12,7 @@ const pdfService = require('../services/pdf.service');
 router.post('/order', authenticateToken, async (req, res) => {
   try {
     const { amount, purpose = 'Apartment Token Booking Deposit', projectId, projectName, unitNumber, bookingId } = req.body;
-    
+
     if (!amount || amount <= 0) {
       return res.status(400).json({ success: false, error: 'Valid payment amount is required.' });
     }
@@ -70,7 +70,7 @@ router.post('/order', authenticateToken, async (req, res) => {
         role: req.user.role,
         details: JSON.stringify({ amount, orderId: orderResult.order.id, provider: orderResult.provider })
       }
-    }).catch(() => {});
+    }).catch(() => { });
 
     res.status(201).json({
       success: true,
@@ -201,7 +201,7 @@ router.post('/verify', authenticateToken, async (req, res) => {
         const agrValue = Number(existingBooking.agreementValue || 8500000);
         const newPct = (newPaid / agrValue) * 100;
         const isFullyPaid = newPaid >= agrValue;
-        const hasTokenOrMore = newPaid >= (agrValue * 0.10);
+        const hasTenPercent = newPaid >= (agrValue * 0.10);
 
         const updateData = {
           paidAmount: newPaid,
@@ -210,6 +210,13 @@ router.post('/verify', authenticateToken, async (req, res) => {
 
         if (isFullyPaid) {
           updateData.bookingStatus = 'Fully Paid & Allotted';
+          updateData.allotmentStatus = 'Letter Issued';
+          if (!existingBooking.allotmentLetterNo) {
+            updateData.allotmentLetterNo = `ALT-GJ-2026-${Date.now().toString().slice(-6)}`;
+            updateData.allotmentDate = new Date().toLocaleDateString('en-IN', { dateStyle: 'long' });
+          }
+        } else if (hasTenPercent) {
+          updateData.bookingStatus = 'Confirmed (10% Advance Paid)';
           updateData.allotmentStatus = 'Letter Issued';
           if (!existingBooking.allotmentLetterNo) {
             updateData.allotmentLetterNo = `ALT-GJ-2026-${Date.now().toString().slice(-6)}`;
@@ -229,7 +236,7 @@ router.post('/verify', authenticateToken, async (req, res) => {
           await prisma.unit.update({
             where: { id: existingBooking.unitId },
             data: { status: isFullyPaid ? 'Allotted' : 'Booked' }
-          }).catch(() => {});
+          }).catch(() => { });
         }
       } else {
         // Find suitable unit
@@ -249,7 +256,8 @@ router.post('/verify', authenticateToken, async (req, res) => {
 
         const agrVal = targetUnit?.basePrice || 8500000;
         const isFullyPaid = payAmount >= agrVal;
-        const allotmentLetterNo = isFullyPaid ? `ALT-GJ-2026-${Date.now().toString().slice(-6)}` : null;
+        const hasTenPercent = payAmount >= (agrVal * 0.10);
+        const allotmentLetterNo = (isFullyPaid || hasTenPercent) ? `ALT-GJ-2026-${Date.now().toString().slice(-6)}` : null;
 
         linkedBooking = await prisma.propertyBooking.create({
           data: {
@@ -267,10 +275,12 @@ router.post('/verify', authenticateToken, async (req, res) => {
             agreementValue: Number(agrVal),
             paidAmount: payAmount,
             paymentPercentage: Math.min(100, Number(((payAmount / agrVal) * 100).toFixed(2))),
-            bookingStatus: isFullyPaid ? 'Fully Paid & Allotted' : 'Confirmed (Token Paid)',
-            allotmentStatus: isFullyPaid ? 'Letter Issued' : 'Under Approval',
+            bookingStatus: isFullyPaid
+              ? 'Fully Paid & Allotted'
+              : (hasTenPercent ? 'Confirmed (10% Advance Paid)' : 'Confirmed (Token Paid)'),
+            allotmentStatus: (isFullyPaid || hasTenPercent) ? 'Letter Issued' : 'Under Approval',
             allotmentLetterNo,
-            allotmentDate: isFullyPaid ? new Date().toLocaleDateString('en-IN', { dateStyle: 'long' }) : null,
+            allotmentDate: (isFullyPaid || hasTenPercent) ? new Date().toLocaleDateString('en-IN', { dateStyle: 'long' }) : null,
             reraNumber: targetUnit?.project?.reraNumber || 'PR/GJ/AHMEDABAD/AUDA/RAA10022/2026'
           }
         });
@@ -279,7 +289,7 @@ router.post('/verify', authenticateToken, async (req, res) => {
           await prisma.unit.update({
             where: { id: targetUnit.id },
             data: { status: isFullyPaid ? 'Allotted' : 'Booked' }
-          }).catch(() => {});
+          }).catch(() => { });
         }
       }
     } catch (bookingSyncErr) {
@@ -294,7 +304,7 @@ router.post('/verify', authenticateToken, async (req, res) => {
         role: req.user.role,
         details: JSON.stringify({ paymentId: payment.paymentId, amount: payment.amount, bookingId: linkedBooking?.id })
       }
-    }).catch(() => {});
+    }).catch(() => { });
 
     res.json({
       success: true,
@@ -414,7 +424,7 @@ router.post('/webhook', express.raw({ type: 'application/json' }), async (req, r
     }
 
     const event = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-    
+
     if (event.event === 'payment.captured') {
       const paymentEntity = event.payload?.payment?.entity;
       if (paymentEntity) {

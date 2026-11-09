@@ -61,7 +61,12 @@ router.get('/dashboard', authenticateToken, async (req, res) => {
       prisma.lead.count({ where: { ...leadWhere, isQualified: true } }),
       prisma.lead.count({ where: { ...leadWhere, status: 'New', assignedExecutiveId: null } }),
       prisma.booking.count({ where: bookingWhere }),
-      prisma.booking.count({ where: { ...bookingWhere, status: 'Completed' } }),
+      prisma.booking.count({
+        where: {
+          ...bookingWhere,
+          status: { in: ['Completed', 'Confirmed', 'Visited', 'Attended'] }
+        }
+      }),
       prisma.followUp.groupBy({
         by: ['status'],
         where: followUpWhere,

@@ -183,7 +183,7 @@ router.post('/conversations/initiate', authenticateToken, async (req, res) => {
       await prisma.lead.update({
         where: { id: targetLeadId },
         data: { assignedExecutiveId: poojaId }
-      }).catch(() => {});
+      }).catch(() => { });
     }
 
     // Find existing conversation for this lead

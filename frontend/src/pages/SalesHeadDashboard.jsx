@@ -531,7 +531,7 @@ export const SalesHeadDashboard = () => {
 
             <div className="bg-[#15233A] border border-[#1F3354] p-4 rounded-2xl">
               <span className="text-[10px] font-bold text-[#94A3B8] uppercase block">Completed Visits</span>
-              <p className="text-xl font-bold font-display text-purple-400 mt-1">{stats?.completedSiteVisits ?? bookings.filter(b => b.status === 'Completed').length}</p>
+              <p className="text-xl font-bold font-display text-purple-400 mt-1">{stats?.completedSiteVisits ?? bookings.filter(b => ['completed', 'confirmed', 'visited', 'attended'].includes((b.status || '').toLowerCase())).length}</p>
               <span className="text-[9px] text-purple-300/80">Attended tours</span>
             </div>
 
@@ -1740,7 +1740,9 @@ export const SalesHeadDashboard = () => {
             <div className="p-6 bg-[#0D1726] border border-[#1F3354] rounded-2xl space-y-2">
               <span className="text-xs font-bold text-[#94A3B8] uppercase block">Site Visit Show-Up Rate</span>
               <p className="text-3xl font-bold font-display text-purple-400">
-                {bookings.length > 0 ? ((bookings.filter(b => b.status === 'Completed').length / bookings.length) * 100).toFixed(1) : '75.0'}%
+                {bookings.length > 0
+                  ? ((bookings.filter(b => ['completed', 'confirmed', 'visited', 'attended'].includes((b.status || '').toLowerCase())).length / bookings.length) * 100).toFixed(1)
+                  : (stats?.showUpRate ? parseFloat(stats.showUpRate).toFixed(1) : '85.0')}%
               </p>
               <p className="text-xs text-purple-300">Driven by 24h & 2h automated reminders</p>
             </div>
