@@ -10,19 +10,36 @@ const pdfService = require('../services/pdf.service');
  */
 router.post('/', authenticateToken, async (req, res) => {
   try {
-    const { projectId, unitId, tokenAmount = 100000, agreementValue = 8500000 } = req.body;
+    const { projectId, unitId, bookingId, unitNumber, tokenAmount = 100000, agreementValue = 8500000 } = req.body;
 
-    if (!projectId || !unitId) {
-      return res.status(400).json({ success: false, error: 'Project ID and Unit ID are required.' });
+    // 1. Check if THIS buyer already has an existing booking (by bookingId, unitId, unitNumber, or user's active booking)
+    let existingBuyerBooking = null;
+    if (bookingId) {
+      existingBuyerBooking = await prisma.propertyBooking.findFirst({
+        where: { id: bookingId, buyerId: req.user.id }
+      });
     }
-
-    // 1. Check if THIS buyer already has an existing booking for this unit
-    const existingBuyerBooking = await prisma.propertyBooking.findFirst({
-      where: {
-        buyerId: req.user.id,
-        unitId
-      }
-    });
+    if (!existingBuyerBooking && unitId) {
+      existingBuyerBooking = await prisma.propertyBooking.findFirst({
+        where: { buyerId: req.user.id, unitId }
+      });
+    }
+    if (!existingBuyerBooking && unitNumber) {
+      existingBuyerBooking = await prisma.propertyBooking.findFirst({
+        where: { buyerId: req.user.id, unitNumber }
+      });
+    }
+    if (!existingBuyerBooking && projectId) {
+      existingBuyerBooking = await prisma.propertyBooking.findFirst({
+        where: { buyerId: req.user.id, projectId }
+      });
+    }
+    if (!existingBuyerBooking && (!projectId || !unitId)) {
+      existingBuyerBooking = await prisma.propertyBooking.findFirst({
+        where: { buyerId: req.user.id },
+        orderBy: { createdAt: 'desc' }
+      });
+    }
 
     if (existingBuyerBooking) {
       // Top up / pay balance on existing booking

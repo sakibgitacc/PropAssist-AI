@@ -105,6 +105,7 @@ export const BuyerDashboard = () => {
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [payAmount, setPayAmount] = useState(50000);
   const [selectedUnitId, setSelectedUnitId] = useState('unit-orchid-0902');
+  const [activeBookingForPayment, setActiveBookingForPayment] = useState(null);
   const [paymentProcessing, setPaymentProcessing] = useState(false);
   const [paymentSuccessMsg, setPaymentSuccessMsg] = useState('');
   const [paymentError, setPaymentError] = useState('');
@@ -433,6 +434,7 @@ export const BuyerDashboard = () => {
   };
 
   const handlePayRemaining = (pb) => {
+    setActiveBookingForPayment(pb);
     if (pb.unitId) {
       setSelectedUnitId(pb.unitId);
     }
@@ -448,6 +450,7 @@ export const BuyerDashboard = () => {
   };
 
   const handleOpenPaymentModal = (unitId = null, amount = null) => {
+    setActiveBookingForPayment(null);
     if (unitId) setSelectedUnitId(unitId);
     if (amount) setPayAmount(amount);
     setEscrowStep('review');
@@ -490,7 +493,27 @@ export const BuyerDashboard = () => {
     setEscrowProcessingStage(1);
 
     try {
-      const chosenUnit = AVAILABLE_UNITS.find(u => u.id === selectedUnitId) || AVAILABLE_UNITS[0];
+      const chosenUnit = AVAILABLE_UNITS.find(u => u.id === selectedUnitId) || (activeBookingForPayment ? {
+        id: activeBookingForPayment.unitId || selectedUnitId,
+        projectId: activeBookingForPayment.projectId || 'proj-serene-meadows',
+        projectName: activeBookingForPayment.projectName || 'Serene Meadows',
+        unitNumber: activeBookingForPayment.unitNumber || 'Tower B - 0704',
+        tower: activeBookingForPayment.tower || 'Tower B',
+        floor: activeBookingForPayment.floor || 'Floor 07',
+        configuration: activeBookingForPayment.configuration || '2 BHK Garden View',
+        carpetArea: activeBookingForPayment.carpetArea || 890,
+        price: Number(activeBookingForPayment.agreementValue || 6500000),
+        reraNumber: activeBookingForPayment.reraNumber || 'PR/GJ/AHMEDABAD/AUDA/RAA09918/2026',
+        location: activeBookingForPayment.location || 'South Bopal, Ahmedabad',
+        image: activeBookingForPayment.image || '/assets/plan-3bhk.jpg'
+      } : AVAILABLE_UNITS[0]);
+
+      const targetBookingId = activeBookingForPayment?.id || null;
+      const targetUnitId = activeBookingForPayment?.unitId || chosenUnit.id;
+      const targetProjectId = activeBookingForPayment?.projectId || chosenUnit.projectId;
+      const targetProjectName = activeBookingForPayment?.projectName || chosenUnit.projectName;
+      const targetUnitNumber = activeBookingForPayment?.unitNumber || chosenUnit.unitNumber;
+      const targetPrice = Number(activeBookingForPayment?.agreementValue || chosenUnit.price || 8500000);
 
       // Simulated step progress indicators for clear bank escrow audit
       setTimeout(() => setEscrowProcessingStage(2), 400);
@@ -499,10 +522,11 @@ export const BuyerDashboard = () => {
       // 1. Create order on backend with Razorpay Test Credentials
       const orderRes = await api.post('/payments/order', {
         amount: payAmount,
-        purpose: 'Apartment Token Booking Deposit',
-        projectId: chosenUnit.projectId,
-        projectName: chosenUnit.projectName,
-        unitNumber: chosenUnit.unitNumber
+        purpose: activeBookingForPayment ? 'Milestone Balance Clearance' : 'Apartment Token Booking Deposit',
+        projectId: targetProjectId,
+        projectName: targetProjectName,
+        unitNumber: targetUnitNumber,
+        bookingId: targetBookingId
       });
 
       if (!orderRes.data.success) {
@@ -513,16 +537,23 @@ export const BuyerDashboard = () => {
 
       // 2. Verification callback to finalize transaction and issue allotment letter
       const finalizePayment = async (verifyPayload) => {
-        const verifyRes = await api.post('/payments/verify', verifyPayload);
+        const verifyRes = await api.post('/payments/verify', {
+          ...verifyPayload,
+          bookingId: targetBookingId,
+          projectId: targetProjectId,
+          unitNumber: targetUnitNumber
+        });
         if (verifyRes.data.success) {
           // Reserve unit or update balance on property booking
           let bookingData = verifyRes.data.booking;
           try {
             const pbRes = await api.post('/property-bookings', {
-              projectId: chosenUnit.projectId,
-              unitId: chosenUnit.id,
+              bookingId: targetBookingId,
+              projectId: targetProjectId,
+              unitId: targetUnitId,
+              unitNumber: targetUnitNumber,
               tokenAmount: payAmount,
-              agreementValue: chosenUnit.price
+              agreementValue: targetPrice
             });
             if (pbRes.data?.data) {
               bookingData = pbRes.data.data;
@@ -531,13 +562,26 @@ export const BuyerDashboard = () => {
             console.warn('Booking notice:', pbErr.message);
           }
 
-          const agrVal = Number(bookingData?.agreementValue || chosenUnit.price || 8500000);
-          const currentPaid = Number(bookingData?.paidAmount || payAmount);
+          const agrVal = Number(bookingData?.agreementValue || targetPrice || 8500000);
+          const currentPaid = Number(bookingData?.paidAmount || (Number(activeBookingForPayment?.paidAmount || 0) + payAmount));
           const updatedRemaining = Math.max(0, agrVal - currentPaid);
+
+          // Update local propertyBookings state immediately so all progress bars instantly reflect full payment
+          if (bookingData) {
+            setPropertyBookings(prev => prev.map(b => (b.id === bookingData.id ? { ...b, ...bookingData } : b)));
+          } else if (activeBookingForPayment) {
+            setPropertyBookings(prev => prev.map(b => (b.id === activeBookingForPayment.id ? {
+              ...b,
+              paidAmount: currentPaid,
+              paymentPercentage: Math.min(100, Number(((currentPaid / agrVal) * 100).toFixed(2))),
+              bookingStatus: currentPaid >= agrVal ? 'Fully Paid & Allotted' : 'Confirmed (Token Paid)',
+              allotmentStatus: currentPaid >= agrVal ? 'Letter Issued' : b.allotmentStatus
+            } : b)));
+          }
 
           setLatestTransaction({
             ...verifyRes.data.data,
-            booking: bookingData,
+            booking: bookingData || activeBookingForPayment,
             paidAmount: payAmount,
             totalPaid: currentPaid,
             agreementValue: agrVal,
@@ -546,7 +590,7 @@ export const BuyerDashboard = () => {
             date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
           });
 
-          setPaymentSuccessMsg(`Payment of ₹${payAmount.toLocaleString('en-IN')} confirmed! Unit ${chosenUnit.unitNumber} reserved and escrow receipt generated.`);
+          setPaymentSuccessMsg(`Payment of ₹${payAmount.toLocaleString('en-IN')} confirmed! Unit ${targetUnitNumber} ledger updated and escrow receipt generated.`);
           await fetchBuyerData(true);
           setEscrowStep('success');
         } else {
@@ -1002,18 +1046,33 @@ export const BuyerDashboard = () => {
                   </div>
 
                   {/* Payment Progress Bar */}
-                  <div className="space-y-1.5 pt-2">
-                    <div className="flex justify-between text-xs">
-                      <span className="text-[#94A3B8]">Agreement Value: ₹{propertyBookings[0].agreementValue.toLocaleString('en-IN')}</span>
-                      <strong className="text-emerald-400">Paid: {propertyBookings[0].paymentPercentage}% (₹{propertyBookings[0].paidAmount.toLocaleString('en-IN')})</strong>
-                    </div>
-                    <div className="w-full h-2 rounded-full bg-[#15233A] overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-[#C8814F] to-emerald-400 rounded-full"
-                        style={{ width: `${propertyBookings[0].paymentPercentage}%` }}
-                      />
-                    </div>
-                  </div>
+                  {(() => {
+                    const firstBooking = propertyBookings[0];
+                    const agrVal = Number(firstBooking.agreementValue || 8500000);
+                    const unitPayments = payments.filter(p =>
+                      (firstBooking.unitNumber && p.unitNumber === firstBooking.unitNumber) ||
+                      (firstBooking.projectId && p.projectId === firstBooking.projectId) ||
+                      (firstBooking.projectName && p.projectName?.toLowerCase() === firstBooking.projectName?.toLowerCase())
+                    );
+                    const totalPaymentsPaid = unitPayments.filter(p => p.status === 'Verified').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+                    const paidVal = Math.max(Number(firstBooking.paidAmount || 0), totalPaymentsPaid);
+                    const percent = Math.min(100, Math.round((paidVal / agrVal) * 100));
+
+                    return (
+                      <div className="space-y-1.5 pt-2">
+                        <div className="flex justify-between text-xs">
+                          <span className="text-[#94A3B8]">Agreement Value: ₹{agrVal.toLocaleString('en-IN')}</span>
+                          <strong className="text-emerald-400">Paid: {percent}% (₹{paidVal.toLocaleString('en-IN')})</strong>
+                        </div>
+                        <div className="w-full h-2 rounded-full bg-[#15233A] overflow-hidden">
+                          <div
+                            className="h-full bg-gradient-to-r from-[#C8814F] to-emerald-400 rounded-full transition-all duration-500"
+                            style={{ width: `${Math.max(5, percent)}%` }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })()}
 
                   <div className="flex items-center justify-between pt-2 border-t border-[#1F3354] flex-wrap gap-2">
                     <button
@@ -1431,10 +1490,17 @@ export const BuyerDashboard = () => {
           ) : (
             propertyBookings.map((pb) => {
               const agrVal = Number(pb.agreementValue || 8500000);
-              const paidVal = Number(pb.paidAmount || 0);
+              // Filter verified payments for this booking
+              const unitPayments = payments.filter(p =>
+                (pb.unitNumber && p.unitNumber === pb.unitNumber) ||
+                (pb.projectId && p.projectId === pb.projectId) ||
+                (pb.projectName && p.projectName?.toLowerCase() === pb.projectName?.toLowerCase())
+              );
+              const totalPaymentsPaid = unitPayments.filter(p => p.status === 'Verified').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+              const paidVal = Math.max(Number(pb.paidAmount || 0), totalPaymentsPaid);
               const remainingDue = Math.max(0, agrVal - paidVal);
               const percentPaid = Math.min(100, Math.round((paidVal / agrVal) * 100));
-              const isFullySettled = remainingDue === 0;
+              const isFullySettled = remainingDue === 0 || percentPaid >= 100;
 
               // Image resolution for booked unit
               const propertyImg = pb.configuration?.includes('4 BHK') || pb.configuration?.includes('Villa')
@@ -1450,13 +1516,6 @@ export const BuyerDashboard = () => {
               const locationDisplay = pb.projectName?.includes('Meadows') ? 'South Bopal, Ahmedabad' : pb.projectName?.includes('Villa') ? 'Ambli-Bopal Road, Ahmedabad' : 'SG Highway, Bodakdev, Ahmedabad';
               const bookingRefId = pb.bookingCode || `BK-GJ-2026-${pb.id.slice(-6)}`;
               const bookingDateDisplay = pb.createdAt ? new Date(pb.createdAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : 'Nov 2026';
-
-              // Filter verified payments for this booking
-              const unitPayments = payments.filter(p =>
-                p.unitNumber === pb.unitNumber ||
-                p.projectId === pb.projectId ||
-                p.projectName?.toLowerCase() === pb.projectName?.toLowerCase()
-              );
 
               return (
                 <div key={pb.id} className="bg-[#15233A] border border-[#1F3354] rounded-3xl p-6 sm:p-8 space-y-8 shadow-2xl relative">
@@ -1877,10 +1936,16 @@ export const BuyerDashboard = () => {
           ) : (
             propertyBookings.map((pb) => {
               const agrVal = Number(pb.agreementValue || 8500000);
-              const paidVal = Number(pb.paidAmount || 0);
+              const unitPayments = payments.filter(p =>
+                (pb.unitNumber && p.unitNumber === pb.unitNumber) ||
+                (pb.projectId && p.projectId === pb.projectId) ||
+                (pb.projectName && p.projectName?.toLowerCase() === pb.projectName?.toLowerCase())
+              );
+              const totalPaymentsPaid = unitPayments.filter(p => p.status === 'Verified').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+              const paidVal = Math.max(Number(pb.paidAmount || 0), totalPaymentsPaid);
               const remainingDue = Math.max(0, agrVal - paidVal);
-              const isFullySettled = remainingDue === 0;
-              const isApproved = pb.allotmentStatus === 'Letter Issued' || pb.allotmentStatus === 'Approved';
+              const isFullySettled = remainingDue === 0 || paidVal >= agrVal;
+              const isApproved = pb.allotmentStatus === 'Letter Issued' || pb.allotmentStatus === 'Approved' || isFullySettled;
 
               const propertyImg = pb.configuration?.includes('4 BHK') || pb.configuration?.includes('Villa')
                 ? '/assets/plan-villa.jpg'
@@ -2789,8 +2854,22 @@ export const BuyerDashboard = () => {
 
             {/* ─── STAGE 1: BEFORE PAYMENT (REVIEW & CONFIRMATION) ─── */}
             {escrowStep === 'review' && (() => {
-              const u = AVAILABLE_UNITS.find(unit => unit.id === selectedUnitId) || AVAILABLE_UNITS[0];
-              const existingBooking = propertyBookings.find(b => b.unitNumber === u.unitNumber || b.unitId === u.id);
+              const u = activeBookingForPayment ? {
+                id: activeBookingForPayment.unitId || selectedUnitId,
+                projectName: activeBookingForPayment.projectName,
+                unitNumber: activeBookingForPayment.unitNumber,
+                configuration: activeBookingForPayment.configuration || '2 BHK',
+                floor: activeBookingForPayment.floor || 'Floor 07',
+                carpetArea: activeBookingForPayment.carpetArea || 890,
+                price: Number(activeBookingForPayment.agreementValue || 6500000),
+                image: activeBookingForPayment.projectName?.includes('Meadows')
+                  ? '/assets/story/story-04-living.jpg'
+                  : activeBookingForPayment.configuration?.includes('4 BHK')
+                    ? '/assets/plan-villa.jpg'
+                    : '/assets/story/story-03-residences.jpg'
+              } : (AVAILABLE_UNITS.find(unit => unit.id === selectedUnitId) || AVAILABLE_UNITS[0]);
+
+              const existingBooking = activeBookingForPayment || propertyBookings.find(b => b.unitNumber === u.unitNumber || b.unitId === u.id);
               const previouslyPaid = Number(existingBooking?.paidAmount || 0);
               const remainingBeforePay = Math.max(0, Number(u.price) - previouslyPaid);
               const remainingAfterPay = Math.max(0, remainingBeforePay - payAmount);

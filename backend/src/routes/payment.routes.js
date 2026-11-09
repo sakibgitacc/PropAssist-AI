@@ -11,10 +11,23 @@ const pdfService = require('../services/pdf.service');
  */
 router.post('/order', authenticateToken, async (req, res) => {
   try {
-    const { amount, purpose = 'Apartment Token Booking Deposit', projectId, projectName, unitNumber } = req.body;
+    const { amount, purpose = 'Apartment Token Booking Deposit', projectId, projectName, unitNumber, bookingId } = req.body;
     
     if (!amount || amount <= 0) {
       return res.status(400).json({ success: false, error: 'Valid payment amount is required.' });
+    }
+
+    // If bookingId is provided, resolve project and unit details directly from that booking
+    let resolvedProjectId = projectId;
+    let resolvedProjectName = projectName;
+    let resolvedUnitNumber = unitNumber;
+    if (bookingId) {
+      const bRec = await prisma.propertyBooking.findUnique({ where: { id: bookingId } });
+      if (bRec) {
+        resolvedProjectId = bRec.projectId || resolvedProjectId;
+        resolvedProjectName = bRec.projectName || resolvedProjectName;
+        resolvedUnitNumber = bRec.unitNumber || resolvedUnitNumber;
+      }
     }
 
     const receipt = `rcpt_${Date.now()}`;
@@ -37,9 +50,9 @@ router.post('/order', authenticateToken, async (req, res) => {
         buyerName: req.user.name,
         buyerEmail: req.user.email,
         buyerPhone: req.user.phone || '+919876543210',
-        projectId: projectId || null,
-        projectName: projectName || 'PropAssist Luxury Residences',
-        unitNumber: unitNumber || 'T1-1402',
+        projectId: resolvedProjectId || null,
+        projectName: resolvedProjectName || 'PropAssist Luxury Residences',
+        unitNumber: resolvedUnitNumber || 'T1-1402',
         paymentType: purpose,
         amount: Number(amount),
         currency: 'INR',
@@ -147,9 +160,17 @@ router.post('/verify', authenticateToken, async (req, res) => {
     try {
       const payAmount = Number(payment.amount || 0);
 
-      // Find if this buyer already has a booking for this unit or project
+      // Find if this buyer already has a booking for this unit, project, or by explicit bookingId
       let existingBooking = null;
-      if (payment.unitNumber) {
+      if (req.body.bookingId) {
+        existingBooking = await prisma.propertyBooking.findFirst({
+          where: {
+            id: req.body.bookingId,
+            buyerId: req.user.id
+          }
+        });
+      }
+      if (!existingBooking && payment.unitNumber) {
         existingBooking = await prisma.propertyBooking.findFirst({
           where: {
             buyerId: req.user.id,
@@ -163,6 +184,13 @@ router.post('/verify', authenticateToken, async (req, res) => {
             buyerId: req.user.id,
             projectId: payment.projectId
           }
+        });
+      }
+      if (!existingBooking) {
+        // Fallback: If buyer has a single active booking, apply payment to it
+        existingBooking = await prisma.propertyBooking.findFirst({
+          where: { buyerId: req.user.id },
+          orderBy: { createdAt: 'desc' }
         });
       }
 
