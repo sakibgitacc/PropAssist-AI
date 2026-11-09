@@ -215,6 +215,144 @@ router.get('/', authenticateToken, async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
 
+    // 1. Auto-Reconciliation: If buyer has verified payments but no booking record saved, reconstruct from payments ledger
+    if (role === 'BUYER' && bookings.length === 0) {
+      const verifiedPayments = await prisma.payment.findMany({
+        where: {
+          OR: [{ buyerId: userId }, { buyerEmail: email }],
+          status: 'Verified'
+        },
+        orderBy: { createdAt: 'asc' }
+      });
+
+      if (verifiedPayments.length > 0) {
+        const totalPaid = verifiedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+        const lastPay = verifiedPayments[verifiedPayments.length - 1];
+
+        const bookedUnitIds = (await prisma.propertyBooking.findMany({
+          where: { unitId: { not: null } },
+          select: { unitId: true }
+        })).map(b => b.unitId);
+
+        let targetUnit = null;
+        if (lastPay.unitNumber) {
+          targetUnit = await prisma.unit.findFirst({
+            where: {
+              unitNumber: lastPay.unitNumber,
+              id: { notIn: bookedUnitIds }
+            },
+            include: { project: true }
+          });
+        }
+        if (!targetUnit && lastPay.projectId) {
+          targetUnit = await prisma.unit.findFirst({
+            where: {
+              projectId: lastPay.projectId,
+              id: { notIn: bookedUnitIds }
+            },
+            include: { project: true }
+          });
+        }
+        if (!targetUnit) {
+          targetUnit = await prisma.unit.findFirst({
+            where: {
+              id: { notIn: bookedUnitIds },
+              status: { equals: 'Available', mode: 'insensitive' }
+            },
+            include: { project: true }
+          }) || await prisma.unit.findFirst({
+            where: { id: { notIn: bookedUnitIds } },
+            include: { project: true }
+          });
+        }
+
+        const safeUnitId = targetUnit?.id && !bookedUnitIds.includes(targetUnit.id) ? targetUnit.id : null;
+        const agrVal = Number(targetUnit?.basePrice || 8500000);
+        const isFullyPaid = totalPaid >= agrVal;
+        const hasTenPercent = totalPaid >= Math.round(agrVal * 0.10);
+        const allotmentLetterNo = (isFullyPaid || hasTenPercent) ? `ALT-GJ-2026-${Date.now().toString().slice(-6)}` : null;
+
+        const autoBooking = await prisma.propertyBooking.create({
+          data: {
+            bookingCode: `BK-GJ-${Date.now().toString().slice(-6)}`,
+            buyerId: userId,
+            buyerName: req.user.name || lastPay.buyerName || 'Valued Buyer',
+            buyerEmail: email,
+            buyerPhone: req.user.phone || lastPay.buyerPhone || '+918530493687',
+            projectId: targetUnit?.projectId || lastPay.projectId || 'proj-grand-orchid',
+            projectName: targetUnit?.project?.name || lastPay.projectName || 'The Grand Orchid',
+            unitId: safeUnitId,
+            unitNumber: targetUnit?.unitNumber || lastPay.unitNumber || 'Tower A - 1203',
+            tower: targetUnit?.tower || 'Tower A',
+            configuration: targetUnit?.configuration || '3 BHK Skyline Residence',
+            agreementValue: agrVal,
+            paidAmount: isFullyPaid ? agrVal : totalPaid,
+            paymentPercentage: isFullyPaid ? 100 : Math.min(100, Number(((totalPaid / agrVal) * 100).toFixed(2))),
+            bookingStatus: isFullyPaid
+              ? 'Fully Paid & Allotted'
+              : (hasTenPercent ? 'Confirmed (10% Advance Paid)' : 'Confirmed (Token Paid)'),
+            allotmentStatus: (isFullyPaid || hasTenPercent) ? 'Letter Issued' : 'Under Approval',
+            allotmentLetterNo,
+            allotmentDate: (isFullyPaid || hasTenPercent) ? new Date().toLocaleDateString('en-IN', { dateStyle: 'long' }) : null,
+            reraNumber: targetUnit?.project?.reraNumber || 'PR/GJ/AHMEDABAD/AUDA/RAA10022/2026'
+          },
+          include: {
+            buyer: { select: { id: true, name: true, email: true, phone: true } },
+            unit: true
+          }
+        });
+
+        if (safeUnitId) {
+          await prisma.unit.update({
+            where: { id: safeUnitId },
+            data: { status: isFullyPaid ? 'Allotted' : 'Booked' }
+          }).catch(() => {});
+        }
+
+        bookings.push(autoBooking);
+      }
+    }
+
+    // 2. Synchronize all booking states with real database verified payments to prevent stale data
+    for (const b of bookings) {
+      const verifiedPays = await prisma.payment.findMany({
+        where: {
+          buyerId: b.buyerId || userId,
+          status: 'Verified',
+          OR: [
+            { unitNumber: b.unitNumber },
+            { projectId: b.projectId },
+            ...(b.projectName ? [{ projectName: b.projectName }] : [])
+          ]
+        }
+      });
+      if (verifiedPays.length > 0) {
+        const sumPaid = verifiedPays.reduce((acc, p) => acc + Number(p.amount || 0), 0);
+        const agr = Number(b.agreementValue || 8500000);
+        const remaining = Math.max(0, agr - sumPaid);
+        const isFull = remaining <= 0 || sumPaid >= agr;
+        const has10 = sumPaid >= Math.round(agr * 0.10);
+
+        if (sumPaid > b.paidAmount || (isFull && b.allotmentStatus !== 'Letter Issued') || (has10 && b.allotmentStatus !== 'Letter Issued')) {
+          const updatedFields = {
+            paidAmount: isFull ? agr : sumPaid,
+            paymentPercentage: isFull ? 100 : Math.min(100, Number(((sumPaid / agr) * 100).toFixed(2))),
+            bookingStatus: isFull ? 'Fully Paid & Allotted' : (has10 ? 'Confirmed (10% Advance Paid)' : 'Confirmed (Token Paid)'),
+            allotmentStatus: (isFull || has10) ? 'Letter Issued' : b.allotmentStatus
+          };
+          if ((isFull || has10) && !b.allotmentLetterNo) {
+            updatedFields.allotmentLetterNo = b.allotmentLetterNo || `ALT-GJ-2026-${Date.now().toString().slice(-6)}`;
+            updatedFields.allotmentDate = b.allotmentDate || new Date().toLocaleDateString('en-IN', { dateStyle: 'long' });
+          }
+          await prisma.propertyBooking.update({
+            where: { id: b.id },
+            data: updatedFields
+          }).catch(() => {});
+          Object.assign(b, updatedFields);
+        }
+      }
+    }
+
     res.json({
       success: true,
       count: bookings.length,

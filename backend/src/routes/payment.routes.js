@@ -255,21 +255,36 @@ router.post('/verify', authenticateToken, async (req, res) => {
           }).catch(() => { });
         }
       } else {
-        // Find suitable unit
+        // Find suitable unit that is NOT already in PropertyBooking
+        const bookedUnitIds = (await prisma.propertyBooking.findMany({
+          where: { unitId: { not: null } },
+          select: { unitId: true }
+        })).map(b => b.unitId);
+
         let targetUnit = null;
         if (payment.unitNumber) {
           targetUnit = await prisma.unit.findFirst({
-            where: { unitNumber: payment.unitNumber },
+            where: { unitNumber: payment.unitNumber, id: { notIn: bookedUnitIds } },
             include: { project: true }
           });
         }
         if (!targetUnit && payment.projectId) {
           targetUnit = await prisma.unit.findFirst({
-            where: { projectId: payment.projectId },
+            where: { projectId: payment.projectId, id: { notIn: bookedUnitIds } },
+            include: { project: true }
+          });
+        }
+        if (!targetUnit) {
+          targetUnit = await prisma.unit.findFirst({
+            where: { id: { notIn: bookedUnitIds }, status: { equals: 'Available', mode: 'insensitive' } },
+            include: { project: true }
+          }) || await prisma.unit.findFirst({
+            where: { id: { notIn: bookedUnitIds } },
             include: { project: true }
           });
         }
 
+        const safeUnitId = targetUnit?.id && !bookedUnitIds.includes(targetUnit.id) ? targetUnit.id : null;
         const agrVal = Number(targetUnit?.basePrice || 8500000);
         const remainingBal = Math.max(0, agrVal - payAmount);
         const isFullyPaid = remainingBal <= 0 || payAmount >= agrVal;
@@ -284,10 +299,10 @@ router.post('/verify', authenticateToken, async (req, res) => {
             buyerName: req.user.name,
             buyerEmail: req.user.email,
             buyerPhone: req.user.phone || '+918530493687',
-            projectId: targetUnit?.projectId || payment.projectId,
+            projectId: targetUnit?.projectId || payment.projectId || 'proj-grand-orchid',
             projectName: targetUnit?.project?.name || payment.projectName || 'The Grand Orchid',
-            unitId: targetUnit?.id || null,
-            unitNumber: targetUnit?.unitNumber || payment.unitNumber || 'Tower A - 1402',
+            unitId: safeUnitId,
+            unitNumber: targetUnit?.unitNumber || payment.unitNumber || 'Tower A - 1203',
             tower: targetUnit?.tower || 'Tower A',
             configuration: targetUnit?.configuration || '3 BHK Skyline Residence',
             agreementValue: agrVal,
@@ -303,9 +318,9 @@ router.post('/verify', authenticateToken, async (req, res) => {
           }
         });
 
-        if (targetUnit) {
+        if (safeUnitId) {
           await prisma.unit.update({
-            where: { id: targetUnit.id },
+            where: { id: safeUnitId },
             data: { status: isFullyPaid ? 'Allotted' : 'Booked' }
           }).catch(() => { });
         }

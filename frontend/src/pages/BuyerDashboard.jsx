@@ -101,7 +101,7 @@ export const BuyerDashboard = () => {
   const [isInAppChatOpen, setIsInAppChatOpen] = useState(false);
   const [targetLead, setTargetLead] = useState(null);
 
-  // Razorpay & Escrow Simulator Payment Modal State
+  // Razorpay Payment Modal State
   const [showPaymentModal, setShowPaymentModal] = useState(false);
   const [payAmount, setPayAmount] = useState(50000);
   const [selectedUnitId, setSelectedUnitId] = useState('unit-orchid-0902');
@@ -262,21 +262,13 @@ export const BuyerDashboard = () => {
     }
     setError('');
 
-    // Safety timeout: ensure loading state never hangs
-    const timeoutPromise = new Promise((resolve) => setTimeout(resolve, 1200));
-
     try {
-      const dataFetchPromise = Promise.allSettled([
+      const results = await Promise.allSettled([
         api.get('/leads').catch(() => ({ data: { success: false, leads: [] } })),
         api.get('/slots/bookings').catch(() => ({ data: { success: false, bookings: [] } })),
         api.get('/payments').catch(() => ({ data: { success: false, data: [] } })),
         api.get('/property-bookings').catch(() => ({ data: { success: false, data: [] } })),
         api.get('/slots?availableOnly=true').catch(() => ({ data: { success: false, slots: [] } }))
-      ]);
-
-      const results = await Promise.race([
-        dataFetchPromise,
-        timeoutPromise.then(() => null)
       ]);
 
       if (results) {
@@ -1635,51 +1627,170 @@ export const BuyerDashboard = () => {
                     </div>
                   </div>
 
-                  {/* SECTION C: BOOKING PROGRESS TIMELINE (6 CHRONOLOGICAL STAGES) */}
-                  <div className="bg-[#0D1726] border border-[#1F3354] rounded-2xl p-6 space-y-4">
-                    <div className="flex items-center justify-between pb-2 border-b border-[#1F3354]/60">
-                      <h4 className="text-xs font-bold text-white uppercase tracking-wider flex items-center gap-2">
-                        <Clock size={14} className="text-[#C8814F]" />
-                        <span>Buyer Purchase Journey & Booking Progression</span>
-                      </h4>
-                      <span className="text-[11px] font-mono text-emerald-400 font-semibold">
-                        Stage {isFullySettled ? '6 of 6 (Completed)' : paidVal >= 50000 ? '5 of 6 (Milestone Clearance)' : '3 of 6 (Token Payment)'}
-                      </span>
+                  {/* SECTION C: PAYMENT PROGRESS TIMELINE (TOKEN → 10% ADVANCE → REMAINING BALANCE → 100% COMPLETED) */}
+                  <div className="bg-[#0D1726] border border-[#1F3354] rounded-2xl p-6 space-y-5">
+                    <div className="flex flex-col sm:flex-row sm:items-center justify-between pb-3 border-b border-[#1F3354]/60 gap-2">
+                      <div className="space-y-0.5">
+                        <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-[#C8814F] flex items-center gap-1.5">
+                          <CreditCard size={13} />
+                          Statutory Milestone Progression
+                        </span>
+                        <h4 className="text-sm font-bold text-white">
+                          Payment Progress Timeline • Token → 10% Advance → Remaining Balance → 100% Completed
+                        </h4>
+                      </div>
+                      <div className="flex items-center gap-2 self-start sm:self-auto">
+                        <span className="text-xs font-mono font-bold text-emerald-400 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30">
+                          {displayPct} Cleared ({isFullySettled ? 'Fully Settled' : `₹${(paidVal / 100000).toFixed(2)}L of ₹${(agrVal / 10000000).toFixed(2)}Cr`})
+                        </span>
+                      </div>
                     </div>
 
-                    <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3 pt-2">
-                      {[
-                        { step: 1, title: 'Property Selected', desc: 'Unit reserved in inventory', completed: true },
-                        { step: 2, title: 'Booking Initiated', desc: 'KYC & order created', completed: true },
-                        { step: 3, title: 'Token Payment', desc: '₹50,000 priority deposit', completed: paidVal >= 50000 },
-                        { step: 4, title: 'Booking Confirmed', desc: 'Developer priority lock', completed: (pb.bookingStatus || '').includes('Confirmed') || isFullySettled },
-                        { step: 5, title: 'Remaining Payment', desc: `₹${(remainingDue / 100000).toFixed(2)}L due`, completed: isFullySettled, active: !isFullySettled },
-                        { step: 6, title: 'Full Payment Completed', desc: '100% full agreement settled', completed: isFullySettled }
-                      ].map((item) => (
+                    {/* Dynamic Connecting Progress Line */}
+                    <div className="space-y-2">
+                      <div className="w-full bg-[#15233A] h-2.5 rounded-full overflow-hidden border border-[#1F3354] relative">
                         <div
-                          key={item.step}
-                          className={`p-3.5 rounded-xl border transition-all text-xs space-y-1.5 ${
-                            item.completed
-                              ? 'bg-emerald-950/20 border-emerald-500/40 text-emerald-300'
-                              : item.active
-                                ? 'bg-amber-950/20 border-amber-500/50 text-amber-300 ring-1 ring-amber-500/30'
-                                : 'bg-[#15233A]/40 border-[#1F3354] text-[#64748B]'
-                          }`}
-                        >
-                          <div className="flex items-center justify-between">
-                            <span className="text-[10px] font-bold font-mono">Step 0{item.step}</span>
-                            {item.completed ? (
-                              <CheckCircle2 size={14} className="text-emerald-400" />
-                            ) : item.active ? (
-                              <Clock size={14} className="text-amber-400 animate-pulse" />
-                            ) : (
-                              <Lock size={12} className="text-[#64748B]" />
-                            )}
-                          </div>
-                          <strong className="block text-white font-semibold text-xs leading-tight">{item.title}</strong>
-                          <span className="text-[10px] block opacity-80 leading-normal">{item.desc}</span>
+                          className="h-full bg-gradient-to-r from-[#C8814F] via-emerald-500 to-teal-400 transition-all duration-700 rounded-full"
+                          style={{ width: `${percentPaid}%` }}
+                        />
+                      </div>
+                      <div className="flex items-center justify-between text-[10px] font-mono text-[#94A3B8]">
+                        <span>Token (₹50k/₹1L)</span>
+                        <span>10% Advance (₹{(tenPercentVal / 100000).toFixed(2)}L)</span>
+                        <span>Remaining Balance (₹{(remainingDue / 100000).toFixed(2)}L due)</span>
+                        <span className="text-emerald-400 font-bold">100% Allotment</span>
+                      </div>
+                    </div>
+
+                    {/* 4 Interactive Milestone Cards */}
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5 pt-1">
+                      {/* Milestone 1: Token Payment */}
+                      <div className={`p-4 rounded-xl border transition-all space-y-2 ${
+                        tokenPaid >= 50000 || paidVal >= 50000
+                          ? 'bg-emerald-950/20 border-emerald-500/40 text-emerald-300'
+                          : 'bg-[#15233A]/60 border-[#1F3354] text-[#94A3B8]'
+                      }`}>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#C8814F]">Milestone 01</span>
+                          {tokenPaid >= 50000 || paidVal >= 50000 ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                              <CheckCircle2 size={11} /> Cleared
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-400 border border-amber-500/30 flex items-center gap-1">
+                              <Clock size={11} /> Pending
+                            </span>
+                          )}
                         </div>
-                      ))}
+                        <div>
+                          <strong className="block text-white font-semibold text-xs">Token Payment</strong>
+                          <span className="text-[11px] text-[#94A3B8] block">Priority Reservation Lock</span>
+                        </div>
+                        <div className="pt-1.5 border-t border-[#1F3354]/60 flex items-baseline justify-between text-xs">
+                          <span className="text-[10px] text-[#64748B]">Paid:</span>
+                          <strong className="text-white font-mono">₹{tokenPaid.toLocaleString('en-IN')}</strong>
+                        </div>
+                      </div>
+
+                      {/* Milestone 2: 10% Advance */}
+                      <div className={`p-4 rounded-xl border transition-all space-y-2 ${
+                        paidVal >= tenPercentVal
+                          ? 'bg-emerald-950/20 border-emerald-500/40 text-emerald-300'
+                          : paidVal >= 50000
+                            ? 'bg-amber-950/20 border-amber-500/40 text-amber-300 ring-1 ring-amber-500/30'
+                            : 'bg-[#15233A]/60 border-[#1F3354] text-[#94A3B8]'
+                      }`}>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#C8814F]">Milestone 02</span>
+                          {paidVal >= tenPercentVal ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                              <CheckCircle2 size={11} /> Cleared
+                            </span>
+                          ) : paidVal >= 50000 ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1 animate-pulse">
+                              <Clock size={11} /> Eligible
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#15233A] text-[#64748B] border border-[#1F3354]">
+                              Locked
+                            </span>
+                          )}
+                        </div>
+                        <div>
+                          <strong className="block text-white font-semibold text-xs">10% Advance</strong>
+                          <span className="text-[11px] text-[#94A3B8] block">Target: ₹{(tenPercentVal / 100000).toFixed(2)} Lakhs</span>
+                        </div>
+                        <div className="pt-1.5 border-t border-[#1F3354]/60 flex items-baseline justify-between text-xs">
+                          <span className="text-[10px] text-[#64748B]">Paid:</span>
+                          <strong className="text-white font-mono">₹{advancePaid.toLocaleString('en-IN')}</strong>
+                        </div>
+                      </div>
+
+                      {/* Milestone 3: Remaining Balance */}
+                      <div className={`p-4 rounded-xl border transition-all space-y-2 ${
+                        isFullySettled
+                          ? 'bg-emerald-950/20 border-emerald-500/40 text-emerald-300'
+                          : paidVal >= tenPercentVal
+                            ? 'bg-amber-950/20 border-amber-500/40 text-amber-300 ring-1 ring-amber-500/30'
+                            : 'bg-[#15233A]/60 border-[#1F3354] text-[#94A3B8]'
+                      }`}>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-mono font-bold uppercase tracking-wider text-[#C8814F]">Milestone 03</span>
+                          {isFullySettled ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 flex items-center gap-1">
+                              <CheckCircle2 size={11} /> Settled
+                            </span>
+                          ) : paidVal >= tenPercentVal ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/40 flex items-center gap-1">
+                              <Clock size={11} /> Due
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#15233A] text-[#64748B] border border-[#1F3354]">
+                              Locked
+                            </span>
+                          )}
+                        </div>
+                        <div>
+                          <strong className="block text-white font-semibold text-xs">Remaining Balance</strong>
+                          <span className="text-[11px] text-[#94A3B8] block">Due: ₹{(remainingDue / 100000).toFixed(2)} Lakhs</span>
+                        </div>
+                        <div className="pt-1.5 border-t border-[#1F3354]/60 flex items-baseline justify-between text-xs">
+                          <span className="text-[10px] text-[#64748B]">Paid:</span>
+                          <strong className="text-white font-mono">₹{Math.max(0, paidVal - tenPercentVal).toLocaleString('en-IN')}</strong>
+                        </div>
+                      </div>
+
+                      {/* Milestone 4: 100% Payment Completed */}
+                      <div className={`p-4 rounded-xl border transition-all space-y-2 ${
+                        isFullySettled
+                          ? 'bg-emerald-950/20 border-emerald-500/40 text-emerald-300 shadow-lg shadow-emerald-950/30'
+                          : 'bg-[#15233A]/60 border-[#1F3354] text-[#94A3B8]'
+                      }`}>
+                        <div className="flex items-center justify-between">
+                          <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-[#C8814F]">Milestone 04</span>
+                          {isFullySettled ? (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                              <CheckCircle2 size={11} /> Allotted
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#15233A] text-[#64748B] border border-[#1F3354] flex items-center gap-1">
+                              <Lock size={10} /> Pending
+                            </span>
+                          )}
+                        </div>
+                        <div>
+                          <strong className="block text-white font-semibold text-xs">100% Completed</strong>
+                          <span className="text-[11px] text-[#94A3B8] block">
+                            {isFullySettled ? (pb.allotmentLetterNo || 'Allotment Letter Issued') : 'Unlocks Allotment Letter'}
+                          </span>
+                        </div>
+                        <div className="pt-1.5 border-t border-[#1F3354]/60 flex items-baseline justify-between text-xs">
+                          <span className="text-[10px] text-[#64748B]">Status:</span>
+                          <strong className={`font-mono text-xs ${isFullySettled ? 'text-emerald-400' : 'text-amber-400'}`}>
+                            {isFullySettled ? '100% Settled' : 'Pending'}
+                          </strong>
+                        </div>
+                      </div>
                     </div>
                   </div>
 
@@ -2857,7 +2968,7 @@ export const BuyerDashboard = () => {
         </div>
       )}
 
-      {/* ─── REDESIGNED ESCROW SIMULATOR & PAYMENT WORKFLOW MODAL ─── */}
+      {/* ─── OFFICIAL RAZORPAY GATEWAY & ESCROW WORKFLOW MODAL ─── */}
       {showPaymentModal && (
         <div className="fixed inset-0 z-50 bg-black/85 backdrop-blur-sm flex items-center justify-center p-4 animate-fadeIn">
           <div className="bg-[#15233A] border border-[#1F3354] rounded-3xl w-full max-w-xl p-6 sm:p-8 space-y-6 shadow-2xl relative overflow-hidden">
@@ -2893,8 +3004,8 @@ export const BuyerDashboard = () => {
                 {escrowStep === 'success'
                   ? 'Payment Confirmation & Escrow Receipt'
                   : escrowStep === 'processing'
-                    ? 'Processing Escrow Clearance'
-                    : 'Escrow Payment & Property Token Deposit'}
+                    ? 'Processing Razorpay Escrow Clearance'
+                    : 'Razorpay Payment & Escrow Deposit'}
               </h3>
 
               {/* Progress Stage Stepper */}
@@ -2913,7 +3024,7 @@ export const BuyerDashboard = () => {
                       ? 'bg-[#0D1726] border-[#1F3354] text-emerald-400'
                       : 'bg-[#0D1726] border-[#1F3354] text-[#64748B]'
                 }`}>
-                  2. Escrow Routing
+                  2. Razorpay Gateway
                 </div>
                 <div className={`p-1.5 rounded-lg border text-center transition ${
                   escrowStep === 'success'
