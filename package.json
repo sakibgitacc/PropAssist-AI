@@ -1,0 +1,30 @@
+{
+  "name": "propassist-ai-workspace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "PropAssist AI - Enterprise Real Estate Automation Workspace",
+  "scripts": {
+    "setup": "node scripts/setup.js",
+    "dev": "npm run start:backend",
+    "dev:backend": "cd backend && npm run dev",
+    "dev:frontend": "cd frontend && npm run dev",
+    "worker": "cd backend && npm run worker",
+    "db:check": "cd backend && npm run db:check",
+    "db:generate": "cd backend && npm run db:generate",
+    "db:migrate": "cd backend && npm run db:migrate",
+    "db:seed": "cd backend && npm run db:seed",
+    "test": "cd backend && npm run test",
+    "test:integration": "cd backend && npm run test:integration",
+    "test:roles": "cd backend && npm run test:roles",
+    "setup:admin": "node scripts/setup-super-admin.js",
+    "start:backend": "cd backend && node src/server.js",
+    "start:frontend": "cd frontend && npm run dev",
+    "build:frontend": "cd frontend && npm run build"
+  },
+  "devDependencies": {
+    "prisma": "^5.22.0"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0"
+  }
+}

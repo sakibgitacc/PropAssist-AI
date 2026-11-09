@@ -1,0 +1,422 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  supabaseId   String?  @unique
+  name         String
+  email        String   @unique
+  passwordHash String?
+  role         String   @default("BUYER") // "SUPER_ADMIN", "ADMIN", "SALES_HEAD", "SALES_EXECUTIVE", "BUYER"
+  phone        String?
+  avatar       String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  assignedLeads     Lead[]           @relation("ExecutiveLeads")
+  assignedSlots     VisitSlot[]      @relation("ExecutiveSlots")
+  assignedRecords   LeadAssignment[] @relation("ExecutiveAssignments")
+  createdAssignments LeadAssignment[] @relation("AdminAssignments")
+  internalNotes     InternalNote[]
+  executiveCalls    CallSession[]    @relation("ExecutiveCalls")
+  buyerCalls        CallSession[]    @relation("BuyerCalls")
+  payments          Payment[]        @relation("BuyerPayments")
+  propertyBookings  PropertyBooking[] @relation("BuyerBookings")
+  executivePropertyBookings PropertyBooking[] @relation("ExecutivePropertyBookings")
+  communicationLogs CommunicationLog[] @relation("UserCommunicationLogs")
+  followUps         FollowUp[]       @relation("ExecutiveFollowUps")
+  notifications     Notification[]   @relation("UserNotifications")
+}
+
+model Project {
+  id             String         @id @default(uuid())
+  name           String
+  tagline        String?
+  description    String
+  location       String         // e.g. "SG Highway, Ahmedabad"
+  city           String         @default("Ahmedabad")
+  latitude       Float
+  longitude      Float
+  bhkOptions     String         // e.g. "2, 3, 4 BHK"
+  minPrice       Float
+  maxPrice       Float
+  minArea        Float
+  maxArea        Float
+  possession     String         // e.g. "Dec 2026"
+  reraNumber     String         // Marked as Demo / Sample RERA
+  amenities      String         // JSON string or comma-separated list
+  status         String         @default("Active")
+  isDemo         Boolean        @default(true)
+  createdAt      DateTime       @default(now())
+  updatedAt      DateTime       @updatedAt
+
+  images     ProjectImage[]
+  factSheet  FactSheet?
+  leads      Lead[]
+  visitSlots VisitSlot[]
+  units      Unit[]
+  followUps  FollowUp[]
+}
+
+model ProjectImage {
+  id        String   @id @default(uuid())
+  projectId String
+  url       String
+  caption   String?
+  isPrimary Boolean  @default(false)
+  category  String?  @default("exterior") // "exterior", "interior", "amenity", "floor_plan"
+  createdAt DateTime @default(now())
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model FactSheet {
+  id               String   @id @default(uuid())
+  projectId        String   @unique
+  overview         String
+  specifications   String   // JSON string or formatted specifications
+  pricingDetails   String   // Detailed pricing info, approvals, payment schemes
+  connectivity     String   // Distances to schools, hospitals, airport, metro
+  legalDisclaimers String   // Standard real estate disclaimers
+  rawContent       String   // Context knowledge for AI chatbot retrieval
+  lastUpdatedBy    String?
+  updatedAt        DateTime @updatedAt
+
+  project Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+}
+
+model Lead {
+  id                  String    @id @default(uuid())
+  fullName            String
+  email               String?
+  phone               String
+  budgetMin           Float?
+  budgetMax           Float?
+  preferredBhk        String?
+  preferredLocation   String?
+  timeline            String?   @default("Exploring") // "Immediate", "1-3 months", "3-6 months", "Exploring"
+  source              String    @default("AI Chatbot") // "AI Chatbot", "Website", "Direct Call", "Referral", "Campaign"
+  status              String    @default("New") // "New", "Contacted", "Qualified", "Visit Scheduled", "Visited", "Negotiation", "Converted", "Lost"
+  projectId           String?
+  assignedExecutiveId String?
+  followUpDate        DateTime?
+  notes               String?
+  isQualified         Boolean   @default(false)
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  project           Project?         @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  assignedExecutive User?            @relation("ExecutiveLeads", fields: [assignedExecutiveId], references: [id], onDelete: SetNull)
+  conversations     Conversation[]
+  bookings          Booking[]
+  internalNotes     InternalNote[]
+  reminders         Reminder[]
+  callSessions      CallSession[]
+  assignments       LeadAssignment[]
+  communicationLogs CommunicationLog[]
+  followUps         FollowUp[]
+}
+
+model Conversation {
+  id           String    @id @default(uuid())
+  leadId       String?
+  channel      String    @default("Web Chat")
+  language     String    @default("en") // "en", "hi", "gu"
+  summary      String?
+  handedOff    Boolean   @default(false)
+  handedOffToId String?
+  handedOffAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  lead     Lead?     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  messages Message[]
+}
+
+model Message {
+  id             String   @id @default(uuid())
+  conversationId String
+  senderType     String   // "buyer", "ai", "executive", "system"
+  senderName     String?
+  content        String
+  toolCalls      String?  // Stored JSON string of tool execution details
+  language       String?  @default("en")
+  isRead         Boolean  @default(false)
+  readAt         DateTime?
+  createdAt      DateTime @default(now())
+
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+}
+
+model VisitSlot {
+  id                  String   @id @default(uuid())
+  projectId           String
+  date                String   // "YYYY-MM-DD"
+  startTime           String   // e.g. "10:00 AM"
+  endTime             String   // e.g. "11:00 AM"
+  capacity            Int      @default(3)
+  bookedCount         Int      @default(0)
+  assignedExecutiveId String?
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+
+  project           Project   @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  assignedExecutive User?     @relation("ExecutiveSlots", fields: [assignedExecutiveId], references: [id], onDelete: SetNull)
+  bookings          Booking[]
+}
+
+model Booking {
+  id               String   @id @default(uuid())
+  leadId           String
+  slotId           String
+  buyerName        String
+  buyerPhone       String
+  buyerEmail       String?
+  bookingDate      String
+  timeSlot         String
+  status           String   @default("Confirmed") // "Confirmed", "Completed", "Cancelled", "No-Show"
+  specialRequests  String?
+  confirmationCode String   @unique
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  lead      Lead       @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  slot      VisitSlot  @relation(fields: [slotId], references: [id], onDelete: Cascade)
+  reminders Reminder[]
+}
+
+model LeadAssignment {
+  id           String   @id @default(uuid())
+  leadId       String
+  executiveId  String
+  assignedById String?
+  reason       String?
+  assignedAt   DateTime @default(now())
+
+  lead       Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  executive  User  @relation("ExecutiveAssignments", fields: [executiveId], references: [id], onDelete: Cascade)
+  assignedBy User? @relation("AdminAssignments", fields: [assignedById], references: [id], onDelete: SetNull)
+}
+
+model InternalNote {
+  id        String   @id @default(uuid())
+  leadId    String
+  authorId  String
+  content   String
+  createdAt DateTime @default(now())
+
+  lead   Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  author User @relation(fields: [authorId], references: [id], onDelete: Cascade)
+}
+
+model Reminder {
+  id             String    @id @default(uuid())
+  leadId         String
+  bookingId      String?
+  reminderType   String    // "24h_before", "2h_before", "follow_up"
+  scheduledFor   DateTime
+  status         String    @default("Pending") // "Pending", "Sent", "Simulated", "Failed"
+  channel        String    @default("SMS/WhatsApp Simulation")
+  messageContent String
+  sentAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  lead    Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  booking Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+}
+
+model Consent {
+  id        String   @id @default(uuid())
+  leadPhone String
+  leadEmail String?
+  purpose   String   @default("Property Communication & Visit Notifications")
+  granted   Boolean  @default(true)
+  ipAddress String?
+  userAgent String?
+  grantedAt DateTime @default(now())
+}
+
+model CallSession {
+  id              String    @id @default(uuid())
+  leadId          String
+  executiveId     String
+  buyerId         String?
+  roomName        String    @unique
+  invitationToken String    @unique
+  callType        String    @default("video") // "video", "voice"
+  status          String    @default("Created") // "Created", "REQUESTED", "SCHEDULED", "InProgress", "Completed", "Cancelled", "Expired"
+  scheduledAt     DateTime?
+  startedAt       DateTime?
+  endedAt         DateTime?
+  durationSeconds Int       @default(0)
+  notes           String?
+  expiresAt       DateTime
+  createdAt       DateTime  @default(now())
+
+  lead      Lead  @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  executive User  @relation("ExecutiveCalls", fields: [executiveId], references: [id], onDelete: Cascade)
+  buyer     User? @relation("BuyerCalls", fields: [buyerId], references: [id], onDelete: SetNull)
+}
+
+model Organization {
+  id                  String   @id @default(uuid())
+  name                String
+  legalEntity         String
+  reraLicense         String
+  contactEmail        String
+  contactPhone        String
+  activeProjectsCount Int      @default(1)
+  totalUnits          Int      @default(420)
+  status              String   @default("Active")
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+}
+
+model Unit {
+  id                    String   @id @default(uuid())
+  projectId             String
+  unitNumber            String
+  tower                 String
+  floor                 Int
+  configuration         String   // "2 BHK", "3 BHK", "4 BHK"
+  carpetAreaSqFt        Float
+  superBuiltUpAreaSqFt  Float
+  basePrice             Float
+  status                String   @default("Available") // "Available", "Blocked", "Booked", "Allotted"
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  project         Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  propertyBooking PropertyBooking?
+}
+
+model Payment {
+  id              String   @id @default(uuid())
+  transactionRef  String   @unique
+  orderId         String?  // Razorpay order id
+  paymentId       String?  // Razorpay payment id
+  signature       String?
+  buyerId         String?
+  buyerName       String
+  buyerEmail      String
+  buyerPhone      String
+  projectId       String?
+  projectName     String
+  unitNumber      String?
+  paymentType     String   @default("Token Booking Advance")
+  amount          Float
+  currency        String   @default("INR")
+  status          String   @default("Pending") // "Pending", "Verified", "Failed", "Refunded"
+  paymentMethod   String   @default("Razorpay NetBanking / UPI")
+  receiptNumber   String?  @unique
+  bankRef         String?
+  idempotencyKey  String?  @unique
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  buyer User? @relation("BuyerPayments", fields: [buyerId], references: [id], onDelete: SetNull)
+}
+
+model PropertyBooking {
+  id                  String    @id @default(uuid())
+  bookingCode         String    @unique
+  buyerId             String?
+  buyerName           String
+  buyerEmail          String
+  buyerPhone          String
+  projectId           String
+  projectName         String
+  unitId              String?   @unique
+  unitNumber          String
+  tower               String
+  configuration       String
+  agreementValue      Float
+  paidAmount          Float     @default(0)
+  paymentPercentage   Float     @default(0)
+  bookingStatus       String    @default("Pending Final KYC") // "Pending Final KYC", "Confirmed & Allotted", "Cancelled"
+  allotmentStatus     String    @default("Under Approval") // "Under Approval", "Letter Issued", "Rejected"
+  allotmentLetterNo   String?   @unique
+  allotmentDate       String?
+  assignedExecutiveId String?
+  bankApproval        String?
+  reraNumber          String?
+  createdAt           DateTime  @default(now())
+  updatedAt           DateTime  @updatedAt
+
+  buyer             User? @relation("BuyerBookings", fields: [buyerId], references: [id], onDelete: SetNull)
+  assignedExecutive User? @relation("ExecutivePropertyBookings", fields: [assignedExecutiveId], references: [id], onDelete: SetNull)
+  unit              Unit? @relation(fields: [unitId], references: [id], onDelete: SetNull)
+}
+
+model AuditLog {
+  id          String   @id @default(uuid())
+  action      String
+  performedBy String
+  role        String
+  ipAddress   String?
+  details     String
+  createdAt   DateTime @default(now())
+}
+
+model CommunicationLog {
+  id                String   @id @default(uuid())
+  channel           String   // "WhatsApp", "WhatsApp (Click-to-Chat)", "SMS"
+  direction         String?  @default("OUTBOUND") // "OUTBOUND", "INBOUND"
+  recipient         String
+  recipientName     String?
+  messageContent    String
+  status            String   @default("Sent") // "WHATSAPP_LINK_OPENED", "Sent", "Delivered", "Failed", "Simulated"
+  providerMessageId String?
+  error             String?
+  leadId            String?
+  userId            String?
+  createdAt         DateTime @default(now())
+
+  lead Lead? @relation(fields: [leadId], references: [id], onDelete: SetNull)
+  user User? @relation("UserCommunicationLogs", fields: [userId], references: [id], onDelete: SetNull)
+}
+
+model FollowUp {
+  id              String    @id @default(uuid())
+  leadId          String
+  buyerName       String
+  projectId       String?
+  executiveId     String
+  title           String
+  description     String?
+  type            String    @default("Callback") // "First Contact", "Callback", "Buyer Requirement Discussion", "Budget Discussion", "Site Visit Confirmation", "Post Site Visit Follow-up", "Document Discussion", "Payment Follow-up", "Final Decision Follow-up"
+  priority        String    @default("MEDIUM")   // "HIGH", "MEDIUM", "LOW"
+  scheduledDate   DateTime
+  scheduledTime   String?   @default("11:00 AM")
+  status          String    @default("UPCOMING") // "TODAY", "UPCOMING", "OVERDUE", "COMPLETED", "CANCELLED"
+  completedDate   DateTime?
+  completionNotes String?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  lead      Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  executive User     @relation("ExecutiveFollowUps", fields: [executiveId], references: [id], onDelete: Cascade)
+  project   Project? @relation(fields: [projectId], references: [id], onDelete: SetNull)
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  title     String
+  message   String
+  type      String   @default("INFO") // "INFO", "LEAD_ASSIGNED", "FOLLOW_UP", "SITE_VISIT", "ALLOTMENT"
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation("UserNotifications", fields: [userId], references: [id], onDelete: Cascade)
+}
+
+
