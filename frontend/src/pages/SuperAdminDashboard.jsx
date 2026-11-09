@@ -2703,16 +2703,41 @@ export const SuperAdminDashboard = () => {
                     <span className="text-[#64748B]">Tower & Configuration:</span>
                     <span className="text-[#C8814F] font-bold">{b.tower} • {b.configuration}</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span className="text-[#64748B]">Agreement Value:</span>
-                    <span className="font-mono text-white font-bold">₹{((b.agreementValue || 8500000) / 10000000).toFixed(2)} Cr</span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-[#64748B]">Token Escrow Paid:</span>
-                    <span className="font-mono text-emerald-400 font-bold">
-                      ₹{(b.paidAmount || 0).toLocaleString('en-IN')} ({b.paymentPercentage || 0}%)
-                    </span>
-                  </div>
+                  {(() => {
+                    const agrVal = Number(b.agreementValue || 8500000);
+                    const paidVal = Number(b.paidAmount || 0);
+                    const tenPercentVal = Math.round(agrVal * 0.10);
+                    const tokenPaid = Math.min(paidVal, 100000);
+                    const advancePaid = Math.max(0, Math.min(paidVal - tokenPaid, tenPercentVal - tokenPaid));
+                    const remainingBal = Math.max(0, agrVal - paidVal);
+
+                    return (
+                      <>
+                        <div className="flex justify-between">
+                          <span className="text-[#64748B]">Total Property Price:</span>
+                          <span className="font-mono text-white font-bold">₹{(agrVal / 10000000).toFixed(2)} Cr (₹{agrVal.toLocaleString('en-IN')})</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-[#64748B]">Token Paid:</span>
+                          <span className="font-mono text-[#C8814F] font-bold">₹{tokenPaid.toLocaleString('en-IN')}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-[#64748B]">10% Advance Paid:</span>
+                          <span className="font-mono text-emerald-400 font-bold">₹{advancePaid.toLocaleString('en-IN')}</span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-[#64748B]">Total Paid:</span>
+                          <span className="font-mono text-emerald-400 font-bold">
+                            ₹{paidVal.toLocaleString('en-IN')} ({b.paymentPercentage || 0}%)
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-[#64748B]">Remaining Balance:</span>
+                          <span className="font-mono text-amber-300 font-bold">₹{remainingBal.toLocaleString('en-IN')}</span>
+                        </div>
+                      </>
+                    );
+                  })()}
                   <div className="flex justify-between">
                     <span className="text-[#64748B]">Allotment Certificate No:</span>
                     <span className="font-mono text-purple-400 font-bold">{b.allotmentLetterNo || 'Pending Issue'}</span>

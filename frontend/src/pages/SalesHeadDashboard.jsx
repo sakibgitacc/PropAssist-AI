@@ -1589,9 +1589,39 @@ export const SalesHeadDashboard = () => {
                       <span className="text-xs text-white font-bold">{b.unitNumber} ({b.configuration})</span>
                     </div>
                     <h3 className="text-lg font-bold text-white">{b.buyerName} ({b.buyerPhone})</h3>
-                    <p className="text-xs text-[#94A3B8]">
-                      Agreement Value: ₹{(b.agreementValue / 10000000).toFixed(2)} Cr • Paid Advance: ₹{(b.paidAmount / 100000).toFixed(2)} Lakhs ({b.paymentPercentage}%)
-                    </p>
+                    {(() => {
+                      const agrVal = Number(b.agreementValue || 8500000);
+                      const paidVal = Number(b.paidAmount || 0);
+                      const tenPercentVal = Math.round(agrVal * 0.10);
+                      const tokenPaid = Math.min(paidVal, 100000);
+                      const advancePaid = Math.max(0, Math.min(paidVal - tokenPaid, tenPercentVal - tokenPaid));
+                      const remainingBal = Math.max(0, agrVal - paidVal);
+
+                      return (
+                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pt-1 pb-1 text-xs">
+                          <div className="p-2 bg-[#15233A] rounded-xl border border-[#1F3354]">
+                            <span className="text-[10px] text-[#64748B] block uppercase font-semibold">Total Price</span>
+                            <strong className="text-white font-mono block mt-0.5">₹{(agrVal / 10000000).toFixed(2)} Cr</strong>
+                          </div>
+                          <div className="p-2 bg-[#15233A] rounded-xl border border-[#1F3354]">
+                            <span className="text-[10px] text-[#C8814F] block uppercase font-semibold">Token Paid</span>
+                            <strong className="text-[#C8814F] font-mono block mt-0.5">₹{tokenPaid.toLocaleString('en-IN')}</strong>
+                          </div>
+                          <div className="p-2 bg-[#15233A] rounded-xl border border-[#1F3354]">
+                            <span className="text-[10px] text-emerald-400 block uppercase font-semibold">10% Advance Paid</span>
+                            <strong className="text-emerald-400 font-mono block mt-0.5">₹{advancePaid.toLocaleString('en-IN')}</strong>
+                          </div>
+                          <div className="p-2 bg-[#15233A] rounded-xl border border-[#1F3354]">
+                            <span className="text-[10px] text-emerald-400 block uppercase font-semibold">Total Paid</span>
+                            <strong className="text-emerald-400 font-mono block mt-0.5">₹{(paidVal / 100000).toFixed(2)}L ({b.paymentPercentage || 0}%)</strong>
+                          </div>
+                          <div className="p-2 bg-[#15233A] rounded-xl border border-[#1F3354]">
+                            <span className="text-[10px] text-amber-400 block uppercase font-semibold">Remaining Balance</span>
+                            <strong className="text-amber-300 font-mono block mt-0.5">{remainingBal === 0 ? '₹0 (NIL)' : `₹${(remainingBal / 100000).toFixed(2)}L`}</strong>
+                          </div>
+                        </div>
+                      );
+                    })()}
                     <p className="text-[11px] font-mono text-[#CBD5E1]">
                       Status: <strong className="text-emerald-400">{b.allotmentStatus}</strong> {b.allotmentLetterNo && `(${b.allotmentLetterNo})`}
                     </p>

@@ -42,15 +42,30 @@ router.post('/', authenticateToken, async (req, res) => {
     }
 
     if (existingBuyerBooking) {
-      // Top up / pay balance on existing booking
-      const newPaid = Number(existingBuyerBooking.paidAmount || 0) + Number(tokenAmount || 0);
+      // Calculate true verified paid ledger
+      const verifiedPayments = await prisma.payment.findMany({
+        where: {
+          buyerId: req.user.id,
+          status: 'Verified',
+          OR: [
+            { unitNumber: existingBuyerBooking.unitNumber },
+            { projectId: existingBuyerBooking.projectId },
+            ...(existingBuyerBooking.projectName ? [{ projectName: existingBuyerBooking.projectName }] : [])
+          ]
+        }
+      });
+      const totalVerifiedPayments = verifiedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
       const agrVal = Number(existingBuyerBooking.agreementValue || agreementValue || 8500000);
-      const isFullyPaid = newPaid >= agrVal;
-      const hasTenPercent = newPaid >= (agrVal * 0.10);
+      const newPaid = Math.max(Number(existingBuyerBooking.paidAmount || 0) + Number(tokenAmount || 0), totalVerifiedPayments);
+      const remainingBalance = Math.max(0, agrVal - newPaid);
+      const isFullyPaid = remainingBalance <= 0 || newPaid >= agrVal;
+      const tenPercentThreshold = Math.round(agrVal * 0.10);
+      const hasTenPercent = newPaid >= tenPercentThreshold;
+      const newPct = isFullyPaid ? 100 : Math.min(100, Number(((newPaid / agrVal) * 100).toFixed(2)));
 
       const updateData = {
-        paidAmount: newPaid,
-        paymentPercentage: Math.min(100, Number(((newPaid / agrVal) * 100).toFixed(2))),
+        paidAmount: isFullyPaid ? agrVal : newPaid,
+        paymentPercentage: newPct,
         bookingStatus: isFullyPaid
           ? 'Fully Paid & Allotted'
           : (hasTenPercent ? 'Confirmed (10% Advance Paid)' : 'Confirmed (Token Paid)'),

@@ -196,16 +196,32 @@ router.post('/verify', authenticateToken, async (req, res) => {
       }
 
       if (existingBooking) {
-        // Increment paidAmount on existing booking
-        const newPaid = Number(existingBooking.paidAmount || 0) + payAmount;
+        // Fetch all verified payments for this booking & buyer to strictly eliminate drift, duplicate charging, or missed syncs
+        const verifiedPayments = await prisma.payment.findMany({
+          where: {
+            buyerId: req.user.id,
+            status: 'Verified',
+            OR: [
+              { unitNumber: existingBooking.unitNumber },
+              { projectId: existingBooking.projectId },
+              ...(existingBooking.projectName ? [{ projectName: existingBooking.projectName }] : [])
+            ]
+          }
+        });
+        const totalVerifiedPayments = verifiedPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
         const agrValue = Number(existingBooking.agreementValue || 8500000);
-        const newPct = (newPaid / agrValue) * 100;
-        const isFullyPaid = newPaid >= agrValue;
-        const hasTenPercent = newPaid >= (agrValue * 0.10);
+        // Ensure the current payment is included even if unitNumber had a minor casing difference
+        const currentPayAmount = Number(payment.amount || 0);
+        const newPaid = Math.max(Number(existingBooking.paidAmount || 0) + currentPayAmount, totalVerifiedPayments);
+        const remainingBalance = Math.max(0, agrValue - newPaid);
+        const isFullyPaid = remainingBalance <= 0 || newPaid >= agrValue;
+        const tenPercentThreshold = Math.round(agrValue * 0.10);
+        const hasTenPercent = newPaid >= tenPercentThreshold;
+        const newPct = isFullyPaid ? 100 : Math.min(100, Number(((newPaid / agrValue) * 100).toFixed(2)));
 
         const updateData = {
-          paidAmount: newPaid,
-          paymentPercentage: Math.min(100, Number(newPct.toFixed(2)))
+          paidAmount: isFullyPaid ? agrValue : newPaid,
+          paymentPercentage: newPct
         };
 
         if (isFullyPaid) {
@@ -254,9 +270,11 @@ router.post('/verify', authenticateToken, async (req, res) => {
           });
         }
 
-        const agrVal = targetUnit?.basePrice || 8500000;
-        const isFullyPaid = payAmount >= agrVal;
-        const hasTenPercent = payAmount >= (agrVal * 0.10);
+        const agrVal = Number(targetUnit?.basePrice || 8500000);
+        const remainingBal = Math.max(0, agrVal - payAmount);
+        const isFullyPaid = remainingBal <= 0 || payAmount >= agrVal;
+        const tenPercentThreshold = Math.round(agrVal * 0.10);
+        const hasTenPercent = payAmount >= tenPercentThreshold;
         const allotmentLetterNo = (isFullyPaid || hasTenPercent) ? `ALT-GJ-2026-${Date.now().toString().slice(-6)}` : null;
 
         linkedBooking = await prisma.propertyBooking.create({
@@ -272,9 +290,9 @@ router.post('/verify', authenticateToken, async (req, res) => {
             unitNumber: targetUnit?.unitNumber || payment.unitNumber || 'Tower A - 1402',
             tower: targetUnit?.tower || 'Tower A',
             configuration: targetUnit?.configuration || '3 BHK Skyline Residence',
-            agreementValue: Number(agrVal),
-            paidAmount: payAmount,
-            paymentPercentage: Math.min(100, Number(((payAmount / agrVal) * 100).toFixed(2))),
+            agreementValue: agrVal,
+            paidAmount: isFullyPaid ? agrVal : payAmount,
+            paymentPercentage: isFullyPaid ? 100 : Math.min(100, Number(((payAmount / agrVal) * 100).toFixed(2))),
             bookingStatus: isFullyPaid
               ? 'Fully Paid & Allotted'
               : (hasTenPercent ? 'Confirmed (10% Advance Paid)' : 'Confirmed (Token Paid)'),

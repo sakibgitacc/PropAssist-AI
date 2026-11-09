@@ -440,7 +440,15 @@ export const BuyerDashboard = () => {
       setSelectedUnitId(pb.unitId);
     }
     const agrVal = Number(pb.agreementValue || 8500000);
-    const paidVal = Number(pb.paidAmount || 0);
+    const unitPayments = payments.filter(p =>
+      p.status === 'Verified' && (
+        (pb.unitNumber && p.unitNumber === pb.unitNumber) ||
+        (pb.projectId && p.projectId === pb.projectId) ||
+        (pb.projectName && p.projectName?.toLowerCase() === pb.projectName?.toLowerCase())
+      )
+    );
+    const verifiedPaymentsSum = unitPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+    const paidVal = Math.max(Number(pb.paidAmount || 0), verifiedPaymentsSum);
     const remaining = Math.max(0, agrVal - paidVal);
     setPayAmount(remaining > 0 ? remaining : 50000);
     setEscrowStep('review');
@@ -451,9 +459,29 @@ export const BuyerDashboard = () => {
   };
 
   const handleOpenPaymentModal = (unitId = null, amount = null) => {
-    setActiveBookingForPayment(null);
+    const existing = propertyBookings.find(b => b.unitId === unitId) || (unitId ? null : (propertyBookings[0] || null));
+    setActiveBookingForPayment(existing);
     if (unitId) setSelectedUnitId(unitId);
-    if (amount) setPayAmount(amount);
+    else if (existing?.unitId) setSelectedUnitId(existing.unitId);
+
+    if (amount) {
+      setPayAmount(amount);
+    } else if (existing) {
+      const agrVal = Number(existing.agreementValue || 8500000);
+      const unitPayments = payments.filter(p =>
+        p.status === 'Verified' && (
+          (existing.unitNumber && p.unitNumber === existing.unitNumber) ||
+          (existing.projectId && p.projectId === existing.projectId) ||
+          (existing.projectName && p.projectName?.toLowerCase() === existing.projectName?.toLowerCase())
+        )
+      );
+      const verifiedPaymentsSum = unitPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+      const paidVal = Math.max(Number(existing.paidAmount || 0), verifiedPaymentsSum);
+      const remaining = Math.max(0, agrVal - paidVal);
+      setPayAmount(remaining > 0 ? remaining : 50000);
+    } else {
+      setPayAmount(50000);
+    }
     setEscrowStep('review');
     setPaymentError('');
     setPaymentSuccessMsg('');
@@ -506,20 +534,20 @@ export const BuyerDashboard = () => {
     setEscrowProcessingStage(1);
 
     try {
-      const chosenUnit = AVAILABLE_UNITS.find(u => u.id === selectedUnitId) || (activeBookingForPayment ? {
+      const chosenUnit = activeBookingForPayment ? {
         id: activeBookingForPayment.unitId || selectedUnitId,
-        projectId: activeBookingForPayment.projectId || 'proj-serene-meadows',
-        projectName: activeBookingForPayment.projectName || 'Serene Meadows',
-        unitNumber: activeBookingForPayment.unitNumber || 'Tower B - 0704',
-        tower: activeBookingForPayment.tower || 'Tower B',
-        floor: activeBookingForPayment.floor || 'Floor 07',
-        configuration: activeBookingForPayment.configuration || '2 BHK Garden View',
-        carpetArea: activeBookingForPayment.carpetArea || 890,
-        price: Number(activeBookingForPayment.agreementValue || 6500000),
-        reraNumber: activeBookingForPayment.reraNumber || 'PR/GJ/AHMEDABAD/AUDA/RAA09918/2026',
-        location: activeBookingForPayment.location || 'South Bopal, Ahmedabad',
-        image: activeBookingForPayment.image || '/assets/plan-3bhk.jpg'
-      } : AVAILABLE_UNITS[0]);
+        projectId: activeBookingForPayment.projectId || 'proj-the-grand-orchid',
+        projectName: activeBookingForPayment.projectName || 'The Grand Orchid',
+        unitNumber: activeBookingForPayment.unitNumber || 'Tower A - 1402',
+        tower: activeBookingForPayment.tower || 'Tower A',
+        floor: activeBookingForPayment.floor || 'Floor 14',
+        configuration: activeBookingForPayment.configuration || '3 BHK Skyline Residence',
+        carpetArea: activeBookingForPayment.carpetArea || 1320,
+        price: Number(activeBookingForPayment.agreementValue || 8500000),
+        reraNumber: activeBookingForPayment.reraNumber || 'PR/GJ/AHMEDABAD/AUDA/RAA10022/2026',
+        location: activeBookingForPayment.location || 'SG Highway, Bodakdev, Ahmedabad',
+        image: activeBookingForPayment.image || '/assets/story/story-03-residences.jpg'
+      } : (AVAILABLE_UNITS.find(u => u.id === selectedUnitId) || AVAILABLE_UNITS[0]);
 
       const targetBookingId = activeBookingForPayment?.id || null;
       const targetUnitId = activeBookingForPayment?.unitId || chosenUnit.id;
@@ -1424,29 +1452,31 @@ export const BuyerDashboard = () => {
           {(() => {
             const totalBookings = propertyBookings.length;
             const confirmedBookings = propertyBookings.filter(b => (b.bookingStatus || '').toLowerCase().includes('confirmed') || (b.bookingStatus || '').toLowerCase().includes('allotted')).length;
-            const pendingBookings = propertyBookings.filter(b => !(b.bookingStatus || '').toLowerCase().includes('confirmed') && !(b.bookingStatus || '').toLowerCase().includes('allotted')).length;
-            const totalTokenPaid = propertyBookings.reduce((acc, b) => acc + Math.min(Number(b.paidAmount || 0), 100000), 0);
-            const totalAmountPaid = propertyBookings.reduce((acc, b) => acc + Number(b.paidAmount || 0), 0);
-            const totalRemainingDue = propertyBookings.reduce((acc, b) => acc + Math.max(0, Number(b.agreementValue || 8500000) - Number(b.paidAmount || 0)), 0);
+            const totalPropertyPrice = propertyBookings.reduce((acc, b) => acc + Number(b.agreementValue || 8500000), 0);
+            const totalAmountPaid = propertyBookings.reduce((acc, b) => {
+              const bPayments = payments.filter(p => p.status === 'Verified' && ((b.unitNumber && p.unitNumber === b.unitNumber) || (b.projectId && p.projectId === b.projectId)));
+              const bPaid = bPayments.reduce((sum, p) => sum + Number(p.amount || 0), 0);
+              return acc + Math.max(Number(b.paidAmount || 0), bPaid);
+            }, 0);
+            const totalTokenPaid = propertyBookings.reduce((acc, b) => {
+              const bPayments = payments.filter(p => p.status === 'Verified' && ((b.unitNumber && p.unitNumber === b.unitNumber) || (b.projectId && p.projectId === b.projectId)));
+              const tP = bPayments.filter(p => (p.paymentType || '').toLowerCase().includes('token')).reduce((sum, p) => sum + Number(p.amount || 0), 0);
+              return acc + (tP || Math.min(Number(b.paidAmount || 0), 100000));
+            }, 0);
+            const totalTenPercentPaid = propertyBookings.reduce((acc, b) => {
+              const bAgr = Number(b.agreementValue || 8500000);
+              const bPaid = Number(b.paidAmount || 0);
+              const bToken = Math.min(bPaid, 100000);
+              return acc + Math.max(0, Math.min(bPaid - bToken, Math.round(bAgr * 0.10) - bToken));
+            }, 0);
+            const totalRemainingDue = Math.max(0, totalPropertyPrice - totalAmountPaid);
 
             return (
               <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
                 <div className="bg-[#15233A] border border-[#1F3354] p-4 rounded-2xl relative overflow-hidden">
-                  <span className="text-[10px] font-bold text-[#94A3B8] uppercase block">Total Bookings</span>
-                  <p className="text-2xl font-bold font-display text-white mt-1">{totalBookings}</p>
-                  <span className="text-[10px] text-[#64748B]">Units under contract</span>
-                </div>
-
-                <div className="bg-[#15233A] border border-[#1F3354] p-4 rounded-2xl relative overflow-hidden">
-                  <span className="text-[10px] font-bold text-[#94A3B8] uppercase block">Confirmed Bookings</span>
-                  <p className="text-2xl font-bold font-display text-emerald-400 mt-1">{confirmedBookings}</p>
-                  <span className="text-[10px] text-emerald-300">Escrow token secured</span>
-                </div>
-
-                <div className="bg-[#15233A] border border-[#1F3354] p-4 rounded-2xl relative overflow-hidden">
-                  <span className="text-[10px] font-bold text-[#94A3B8] uppercase block">Pending Bookings</span>
-                  <p className="text-2xl font-bold font-display text-amber-400 mt-1">{pendingBookings}</p>
-                  <span className="text-[10px] text-amber-300">Awaiting clearance</span>
+                  <span className="text-[10px] font-bold text-[#94A3B8] uppercase block">Total Property Price</span>
+                  <p className="text-2xl font-bold font-display text-white mt-1">₹{(totalPropertyPrice / 10000000).toFixed(2)} Cr</p>
+                  <span className="text-[10px] text-[#64748B]">{totalBookings} units under contract</span>
                 </div>
 
                 <div className="bg-[#15233A] border border-[#1F3354] p-4 rounded-2xl relative overflow-hidden">
@@ -1456,15 +1486,27 @@ export const BuyerDashboard = () => {
                 </div>
 
                 <div className="bg-[#15233A] border border-[#1F3354] p-4 rounded-2xl relative overflow-hidden">
+                  <span className="text-[10px] font-bold text-[#94A3B8] uppercase block">10% Advance Paid</span>
+                  <p className="text-2xl font-bold font-display text-emerald-400 mt-1">₹{(totalTenPercentPaid / 100000).toFixed(2)}L</p>
+                  <span className="text-[10px] text-emerald-300">Milestone clearance</span>
+                </div>
+
+                <div className="bg-[#15233A] border border-[#1F3354] p-4 rounded-2xl relative overflow-hidden">
                   <span className="text-[10px] font-bold text-[#94A3B8] uppercase block">Total Amount Paid</span>
                   <p className="text-2xl font-bold font-display text-emerald-400 mt-1">₹{(totalAmountPaid / 100000).toFixed(2)}L</p>
                   <span className="text-[10px] text-emerald-300">Verified to Escrow</span>
                 </div>
 
                 <div className="bg-[#15233A] border border-[#1F3354] p-4 rounded-2xl relative overflow-hidden">
-                  <span className="text-[10px] font-bold text-[#94A3B8] uppercase block">Remaining Payment</span>
+                  <span className="text-[10px] font-bold text-[#94A3B8] uppercase block">Remaining Balance</span>
                   <p className="text-2xl font-bold font-display text-amber-300 mt-1">₹{(totalRemainingDue / 100000).toFixed(2)}L</p>
-                  <span className="text-[10px] text-amber-400">Balance payable</span>
+                  <span className="text-[10px] text-amber-400">Total balance payable</span>
+                </div>
+
+                <div className="bg-[#15233A] border border-[#1F3354] p-4 rounded-2xl relative overflow-hidden">
+                  <span className="text-[10px] font-bold text-[#94A3B8] uppercase block">Confirmed Bookings</span>
+                  <p className="text-2xl font-bold font-display text-emerald-400 mt-1">{confirmedBookings} of {totalBookings}</p>
+                  <span className="text-[10px] text-emerald-300">Allotment verified</span>
                 </div>
               </div>
             );
@@ -1504,9 +1546,15 @@ export const BuyerDashboard = () => {
               const paidVal = Math.max(Number(pb.paidAmount || 0), totalPaymentsPaid);
               const remainingDue = Math.max(0, agrVal - paidVal);
               const rawPct = agrVal > 0 ? (paidVal / agrVal) * 100 : Number(pb.paymentPercentage || 0);
-              const isFullySettled = remainingDue === 0 || rawPct >= 100;
+              const isFullySettled = remainingDue === 0 || rawPct >= 100 || paidVal >= agrVal;
               const percentPaid = isFullySettled ? 100 : Math.min(100, rawPct > 0 ? Number(rawPct.toFixed(2)) : 0);
               const displayPct = isFullySettled ? '100%' : (rawPct >= 1 ? `${rawPct.toFixed(1)}%` : (rawPct > 0 ? `${rawPct.toFixed(2)}%` : '0%'));
+              const tenPercentVal = Math.round(agrVal * 0.10);
+              const tokenPayments = unitPayments.filter(p => p.status === 'Verified' && (p.paymentType || '').toLowerCase().includes('token'));
+              const tokenPaid = tokenPayments.length > 0
+                ? tokenPayments.reduce((acc, p) => acc + Number(p.amount || 0), 0)
+                : (paidVal > 0 ? Math.min(paidVal, 100000) : 0);
+              const advancePaid = Math.max(0, Math.min(paidVal - tokenPaid, tenPercentVal - tokenPaid));
 
               // Image resolution for booked unit
               const propertyImg = pb.configuration?.includes('4 BHK') || pb.configuration?.includes('Villa')
@@ -1657,13 +1705,25 @@ export const BuyerDashboard = () => {
                       </div>
 
                       <div className="p-3.5 rounded-xl bg-[#15233A] border border-[#1F3354]">
-                        <span className="text-[10px] text-[#C8814F] block font-semibold uppercase">Configured Token</span>
-                        <strong className="text-base text-[#C8814F] font-mono block mt-0.5">₹50,000</strong>
+                        <span className="text-[10px] text-[#C8814F] block font-semibold uppercase">Token Paid</span>
+                        <strong className="text-base text-[#C8814F] font-mono block mt-0.5">
+                          ₹{tokenPaid.toLocaleString('en-IN')}
+                        </strong>
                         <span className="text-[10px] text-[#94A3B8]">Priority Lock Advance</span>
                       </div>
 
                       <div className="p-3.5 rounded-xl bg-[#15233A] border border-[#1F3354]">
-                        <span className="text-[10px] text-emerald-400 block font-semibold uppercase">Successfully Paid</span>
+                        <span className="text-[10px] text-emerald-400 block font-semibold uppercase">10% Advance Paid</span>
+                        <strong className="text-base text-emerald-400 font-mono block mt-0.5">
+                          ₹{advancePaid.toLocaleString('en-IN')}
+                        </strong>
+                        <span className="text-[10px] text-emerald-300 font-semibold">
+                          {paidVal >= tenPercentVal ? '10% Target Cleared' : `₹${Math.max(0, tenPercentVal - paidVal).toLocaleString('en-IN')} remaining`}
+                        </span>
+                      </div>
+
+                      <div className="p-3.5 rounded-xl bg-[#15233A] border border-[#1F3354]">
+                        <span className="text-[10px] text-emerald-400 block font-semibold uppercase">Total Paid</span>
                         <strong className="text-base text-emerald-400 font-mono block mt-0.5">
                           ₹{(paidVal / 100000).toFixed(2)} Lakhs
                         </strong>
@@ -1681,17 +1741,13 @@ export const BuyerDashboard = () => {
                       </div>
 
                       <div className="p-3.5 rounded-xl bg-[#15233A] border border-[#1F3354]">
-                        <span className="text-[10px] text-[#64748B] block font-semibold uppercase">Subvention Subsidy</span>
-                        <strong className="text-xs text-white block mt-1">0% Stamp Duty</strong>
-                        <span className="text-[10px] text-emerald-400 font-semibold">Developer Subsidized</span>
-                      </div>
-
-                      <div className="p-3.5 rounded-xl bg-[#15233A] border border-[#1F3354]">
                         <span className="text-[10px] text-[#64748B] block font-semibold uppercase">Payment Status</span>
                         <strong className="text-xs text-white block mt-1">
-                          {isFullySettled ? '100% Settled' : 'Partial Token Advance'}
+                          {isFullySettled ? '100% Full Payment' : (paidVal >= tenPercentVal ? '10% Advance Paid' : 'Token Paid')}
                         </strong>
-                        <span className="text-[10px] text-emerald-300 font-semibold">Verified Safe</span>
+                        <span className="text-[10px] text-emerald-300 font-semibold">
+                          {isFullySettled ? 'Allotment Letter Issued' : (paidVal >= tenPercentVal ? 'Letter Issued' : 'Under Approval')}
+                        </span>
                       </div>
                     </div>
 
@@ -2875,10 +2931,10 @@ export const BuyerDashboard = () => {
                 id: activeBookingForPayment.unitId || selectedUnitId,
                 projectName: activeBookingForPayment.projectName,
                 unitNumber: activeBookingForPayment.unitNumber,
-                configuration: activeBookingForPayment.configuration || '2 BHK',
-                floor: activeBookingForPayment.floor || 'Floor 07',
-                carpetArea: activeBookingForPayment.carpetArea || 890,
-                price: Number(activeBookingForPayment.agreementValue || 6500000),
+                configuration: activeBookingForPayment.configuration || '3 BHK Skyline Residence',
+                floor: activeBookingForPayment.floor || 'Floor 14',
+                carpetArea: activeBookingForPayment.carpetArea || 1320,
+                price: Number(activeBookingForPayment.agreementValue || 8500000),
                 image: activeBookingForPayment.projectName?.includes('Meadows')
                   ? '/assets/story/story-04-living.jpg'
                   : activeBookingForPayment.configuration?.includes('4 BHK')
@@ -2887,9 +2943,20 @@ export const BuyerDashboard = () => {
               } : (AVAILABLE_UNITS.find(unit => unit.id === selectedUnitId) || AVAILABLE_UNITS[0]);
 
               const existingBooking = activeBookingForPayment || propertyBookings.find(b => b.unitNumber === u.unitNumber || b.unitId === u.id);
-              const previouslyPaid = Number(existingBooking?.paidAmount || 0);
-              const remainingBeforePay = Math.max(0, Number(u.price) - previouslyPaid);
+              const unitPayments = payments.filter(p =>
+                p.status === 'Verified' && existingBooking && (
+                  (existingBooking.unitNumber && p.unitNumber === existingBooking.unitNumber) ||
+                  (existingBooking.projectId && p.projectId === existingBooking.projectId) ||
+                  (existingBooking.projectName && p.projectName?.toLowerCase() === existingBooking.projectName?.toLowerCase())
+                )
+              );
+              const verifiedSum = unitPayments.reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
+              const previouslyPaid = Math.max(Number(existingBooking?.paidAmount || 0), verifiedSum);
+              const totalPrice = Number(existingBooking?.agreementValue || u.price || 8500000);
+              const remainingBeforePay = Math.max(0, totalPrice - previouslyPaid);
               const remainingAfterPay = Math.max(0, remainingBeforePay - payAmount);
+              const tenPercentTarget = Math.round(totalPrice * 0.10);
+              const tenPercentRemaining = Math.max(0, tenPercentTarget - previouslyPaid);
 
               return (
                 <div className="space-y-4">
@@ -2921,7 +2988,7 @@ export const BuyerDashboard = () => {
                     <div className="p-3 bg-[#0D1726] border border-[#1F3354] rounded-xl space-y-0.5">
                       <span className="text-[10px] text-[#64748B] uppercase font-semibold block">Payment Purpose</span>
                       <strong className="text-white block truncate">
-                        {previouslyPaid > 0 ? 'Milestone Balance Clearance' : 'Apartment Token Booking Deposit'}
+                        {previouslyPaid > 0 ? (remainingBeforePay <= payAmount ? 'Final Remaining Balance Settlement' : 'Milestone Balance Clearance') : 'Apartment Token Booking Deposit'}
                       </strong>
                       <span className="text-[10px] text-emerald-400 block">70% RERA Escrow Protection</span>
                     </div>
@@ -2941,14 +3008,12 @@ export const BuyerDashboard = () => {
                         { amount: 50000, label: 'Token (₹50k)' },
                         { amount: 100000, label: 'Priority (₹1L)' },
                         {
-                          amount: Math.round(u.price * 0.10) > previouslyPaid
-                            ? Math.max(50000, Math.round(u.price * 0.10) - previouslyPaid)
-                            : Math.round(u.price * 0.10),
-                          label: '10% Advance'
+                          amount: tenPercentRemaining > 0 ? tenPercentRemaining : tenPercentTarget,
+                          label: tenPercentRemaining > 0 ? `10% Advance (₹${(tenPercentRemaining / 100000).toFixed(2)}L)` : '10% Advance'
                         },
                         {
-                          amount: remainingBeforePay > 0 ? remainingBeforePay : u.price,
-                          label: 'Full Balance'
+                          amount: remainingBeforePay > 0 ? remainingBeforePay : totalPrice,
+                          label: `Full Balance (₹${((remainingBeforePay > 0 ? remainingBeforePay : totalPrice) / 100000).toFixed(2)}L)`
                         }
                       ].map((tier, idx) => (
                         <button
@@ -2983,7 +3048,7 @@ export const BuyerDashboard = () => {
                   <div className="p-3.5 bg-[#09111D] border border-[#1F3354] rounded-xl grid grid-cols-3 gap-2 text-center text-xs">
                     <div>
                       <span className="text-[10px] text-[#64748B] block font-semibold">Total Agreement</span>
-                      <strong className="text-white font-mono block">₹{(u.price / 10000000).toFixed(2)} Cr</strong>
+                      <strong className="text-white font-mono block">₹{(totalPrice / 10000000).toFixed(2)} Cr</strong>
                     </div>
                     <div>
                       <span className="text-[10px] text-emerald-400 block font-semibold">This Payment</span>
