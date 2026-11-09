@@ -194,28 +194,27 @@ router.post('/register', validateBody(buyerRegisterSchema), async (req, res) => 
     }
 
     let supabaseId = null;
-    let passwordHash = null;
+    const passwordHash = await bcrypt.hash(password, 10);
 
-    // Register with Supabase Auth if configured
+    // Register with Supabase Auth if configured (graceful synchronization)
     if (supabaseService.isSupabaseConfigured()) {
-      const supaResult = await supabaseService.registerInSupabase({
-        email: cleanEmail,
-        password,
-        name,
-        role: 'BUYER',
-        phone
-      });
-
-      if (supaResult.error) {
-        return res.status(400).json({
-          success: false,
-          error: supaResult.error
+      try {
+        const supaResult = await supabaseService.registerInSupabase({
+          email: cleanEmail,
+          password,
+          name,
+          role: 'BUYER',
+          phone
         });
+
+        if (supaResult && supaResult.user?.id) {
+          supabaseId = supaResult.user.id;
+        } else if (supaResult?.error) {
+          console.warn('[Supabase Auth Notice]:', supaResult.error);
+        }
+      } catch (supaErr) {
+        console.warn('[Supabase Auth Warning]:', supaErr.message);
       }
-      supabaseId = supaResult.user?.id;
-    } else {
-      // In local dev without Supabase, hash with bcrypt
-      passwordHash = await bcrypt.hash(password, 10);
     }
 
     // Create verified profile in PostgreSQL
@@ -284,23 +283,26 @@ router.post('/create-staff', authenticateToken, requireRole(['ADMIN', 'SUPER_ADM
     }
 
     let supabaseId = null;
-    let passwordHash = null;
+    const passwordHash = await bcrypt.hash(password, 10);
 
     if (supabaseService.isSupabaseConfigured()) {
-      const supaResult = await supabaseService.registerInSupabase({
-        email: cleanEmail,
-        password,
-        name,
-        role,
-        phone
-      });
+      try {
+        const supaResult = await supabaseService.registerInSupabase({
+          email: cleanEmail,
+          password,
+          name,
+          role,
+          phone
+        });
 
-      if (supaResult.error) {
-        return res.status(400).json({ success: false, error: supaResult.error });
+        if (supaResult && supaResult.user?.id) {
+          supabaseId = supaResult.user.id;
+        } else if (supaResult?.error) {
+          console.warn('[Supabase Auth Staff Notice]:', supaResult.error);
+        }
+      } catch (supaErr) {
+        console.warn('[Supabase Auth Staff Warning]:', supaErr.message);
       }
-      supabaseId = supaResult.user?.id;
-    } else {
-      passwordHash = await bcrypt.hash(password, 10);
     }
 
     const newStaff = await prisma.user.create({

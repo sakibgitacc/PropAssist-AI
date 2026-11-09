@@ -1,7 +1,13 @@
 import axios from 'axios';
 
+// Dynamically resolve API URL in production on Render or local Vite dev server
+const rawUrl = import.meta.env.VITE_API_URL;
+const baseURL = rawUrl
+  ? (rawUrl.endsWith('/api') ? rawUrl : `${rawUrl.replace(/\/+$/, '')}/api`)
+  : '/api';
+
 const api = axios.create({
-  baseURL: '/api',
+  baseURL,
   headers: {
     'Content-Type': 'application/json'
   }

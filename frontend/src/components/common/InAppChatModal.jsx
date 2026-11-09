@@ -87,7 +87,10 @@ export const InAppChatModal = ({
     if (!isOpen || !conversationId) return;
 
     const token = localStorage.getItem('propassist_token');
-    const socket = io(window.location.origin, {
+    const rawApiUrl = import.meta.env.VITE_API_URL;
+    const socketOrigin = rawApiUrl ? rawApiUrl.replace(/\/api\/?$/, '') : window.location.origin;
+
+    const socket = io(socketOrigin, {
       path: '/socket.io',
       auth: { token },
       transports: ['websocket', 'polling']
