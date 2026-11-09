@@ -544,36 +544,51 @@ export const BuyerDashboard = () => {
           unitNumber: targetUnitNumber
         });
         if (verifyRes.data.success) {
-          // Reserve unit or update balance on property booking
+          // 1. Immediately register verified payment in local state for zero-latency ledger updates
+          if (verifyRes.data.data) {
+            setPayments(prev => [verifyRes.data.data, ...prev.filter(p => p.id !== verifyRes.data.data.id)]);
+          }
+
+          // 2. Reserve unit or update balance on property booking
           let bookingData = verifyRes.data.booking;
-          try {
-            const pbRes = await api.post('/property-bookings', {
-              bookingId: targetBookingId,
-              projectId: targetProjectId,
-              unitId: targetUnitId,
-              unitNumber: targetUnitNumber,
-              tokenAmount: payAmount,
-              agreementValue: targetPrice
-            });
-            if (pbRes.data?.data) {
-              bookingData = pbRes.data.data;
+          // Avoid double-charging: only call /property-bookings if /payments/verify did not already create/update the booking
+          if (!bookingData) {
+            try {
+              const pbRes = await api.post('/property-bookings', {
+                bookingId: targetBookingId,
+                projectId: targetProjectId,
+                unitId: targetUnitId,
+                unitNumber: targetUnitNumber,
+                tokenAmount: payAmount,
+                agreementValue: targetPrice
+              });
+              if (pbRes.data?.data) {
+                bookingData = pbRes.data.data;
+              }
+            } catch (pbErr) {
+              console.warn('Booking notice:', pbErr.message);
             }
-          } catch (pbErr) {
-            console.warn('Booking notice:', pbErr.message);
           }
 
           const agrVal = Number(bookingData?.agreementValue || targetPrice || 8500000);
           const currentPaid = Number(bookingData?.paidAmount || (Number(activeBookingForPayment?.paidAmount || 0) + payAmount));
           const updatedRemaining = Math.max(0, agrVal - currentPaid);
+          const updatedPct = Math.min(100, Number(((currentPaid / agrVal) * 100).toFixed(2)));
 
-          // Update local propertyBookings state immediately so all progress bars instantly reflect full payment
+          // Update local propertyBookings state immediately so all progress bars instantly reflect updated payment
           if (bookingData) {
-            setPropertyBookings(prev => prev.map(b => (b.id === bookingData.id ? { ...b, ...bookingData } : b)));
+            setPropertyBookings(prev => {
+              const exists = prev.some(b => b.id === bookingData.id);
+              if (exists) {
+                return prev.map(b => (b.id === bookingData.id ? { ...b, ...bookingData, paidAmount: currentPaid, paymentPercentage: updatedPct } : b));
+              }
+              return [{ ...bookingData, paidAmount: currentPaid, paymentPercentage: updatedPct }, ...prev];
+            });
           } else if (activeBookingForPayment) {
             setPropertyBookings(prev => prev.map(b => (b.id === activeBookingForPayment.id ? {
               ...b,
               paidAmount: currentPaid,
-              paymentPercentage: Math.min(100, Number(((currentPaid / agrVal) * 100).toFixed(2))),
+              paymentPercentage: updatedPct,
               bookingStatus: currentPaid >= agrVal ? 'Fully Paid & Allotted' : 'Confirmed (Token Paid)',
               allotmentStatus: currentPaid >= agrVal ? 'Letter Issued' : b.allotmentStatus
             } : b)));
@@ -590,7 +605,7 @@ export const BuyerDashboard = () => {
             date: new Date().toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
           });
 
-          setPaymentSuccessMsg(`Payment of ₹${payAmount.toLocaleString('en-IN')} confirmed! Unit ${targetUnitNumber} ledger updated and escrow receipt generated.`);
+          setPaymentSuccessMsg(`Payment of ₹${payAmount.toLocaleString('en-IN')} confirmed via Razorpay! Unit ${targetUnitNumber} ledger updated and escrow receipt generated.`);
           await fetchBuyerData(true);
           setEscrowStep('success');
         } else {
@@ -1499,8 +1514,10 @@ export const BuyerDashboard = () => {
               const totalPaymentsPaid = unitPayments.filter(p => p.status === 'Verified').reduce((acc, p) => acc + (Number(p.amount) || 0), 0);
               const paidVal = Math.max(Number(pb.paidAmount || 0), totalPaymentsPaid);
               const remainingDue = Math.max(0, agrVal - paidVal);
-              const percentPaid = Math.min(100, Math.round((paidVal / agrVal) * 100));
-              const isFullySettled = remainingDue === 0 || percentPaid >= 100;
+              const rawPct = agrVal > 0 ? (paidVal / agrVal) * 100 : Number(pb.paymentPercentage || 0);
+              const isFullySettled = remainingDue === 0 || rawPct >= 100;
+              const percentPaid = isFullySettled ? 100 : Math.min(100, rawPct > 0 ? Number(rawPct.toFixed(2)) : 0);
+              const displayPct = isFullySettled ? '100%' : (rawPct >= 1 ? `${rawPct.toFixed(1)}%` : (rawPct > 0 ? `${rawPct.toFixed(2)}%` : '0%'));
 
               // Image resolution for booked unit
               const propertyImg = pb.configuration?.includes('4 BHK') || pb.configuration?.includes('Villa')
@@ -1637,7 +1654,7 @@ export const BuyerDashboard = () => {
                         <span>Payment Breakdown & Remaining Balance Ledger</span>
                       </h4>
                       <span className="text-xs font-mono font-bold text-emerald-400">
-                        {percentPaid}% Cleared
+                        {displayPct} Cleared
                       </span>
                     </div>
 
@@ -1661,7 +1678,7 @@ export const BuyerDashboard = () => {
                         <strong className="text-base text-emerald-400 font-mono block mt-0.5">
                           ₹{(paidVal / 100000).toFixed(2)} Lakhs
                         </strong>
-                        <span className="text-[10px] text-emerald-300 font-semibold">{percentPaid}% Escrow Cleared</span>
+                        <span className="text-[10px] text-emerald-300 font-semibold">{displayPct} Escrow Cleared</span>
                       </div>
 
                       <div className="p-3.5 rounded-xl bg-[#15233A] border border-[#1F3354]">
@@ -1693,12 +1710,12 @@ export const BuyerDashboard = () => {
                     <div className="space-y-1.5 pt-1">
                       <div className="flex justify-between text-xs">
                         <span className="text-[#94A3B8]">Agreement Settlement Progress</span>
-                        <span className="font-mono text-emerald-400 font-bold">{percentPaid}% Completed</span>
+                        <span className="font-mono text-emerald-400 font-bold">{displayPct} Completed</span>
                       </div>
                       <div className="w-full h-3 rounded-full bg-[#15233A] overflow-hidden border border-[#1F3354] p-0.5">
                         <div
                           className="h-full rounded-full bg-gradient-to-r from-[#C8814F] via-amber-500 to-emerald-500 transition-all duration-500"
-                          style={{ width: `${Math.max(5, percentPaid)}%` }}
+                          style={{ width: `${isFullySettled ? 100 : (paidVal > 0 ? Math.max(4, Math.min(100, rawPct)) : 0)}%` }}
                         />
                       </div>
                     </div>
@@ -1784,9 +1801,9 @@ export const BuyerDashboard = () => {
                           <span className="text-xs text-[#64748B]">•</span>
                           <span className="text-xs text-white font-semibold">ICICI Bank Escrow #002405019842</span>
                         </div>
-                        <h4 className="text-base font-bold text-white">Settle Balance or Pay Next Milestone via Escrow Simulator</h4>
+                        <h4 className="text-base font-bold text-white">Settle Balance or Pay Next Milestone via Razorpay Gateway</h4>
                         <p className="text-xs text-[#94A3B8] max-w-xl">
-                          Pay directly into the project's RERA-registered escrow account. Instant cryptographic verification, ledger balance recalculation, and automated provisional allotment issuance.
+                          Pay directly into the project's RERA-registered escrow account via Razorpay. Instant cryptographic verification, ledger balance recalculation, and automated provisional allotment issuance.
                         </p>
                       </div>
 
@@ -1794,10 +1811,10 @@ export const BuyerDashboard = () => {
                         <button
                           type="button"
                           onClick={() => handlePayRemaining(pb)}
-                          className="px-5 py-3 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-lg shadow-emerald-700/20"
+                          className="px-5 py-3 bg-gradient-to-r from-[#C8814F] to-[#E09865] hover:opacity-95 text-white rounded-xl text-xs font-bold transition flex items-center gap-2 shadow-lg shadow-[#C8814F]/20 cursor-pointer"
                         >
-                          <ShieldCheck size={16} />
-                          <span>Pay via Escrow Simulator (Instant Clearance)</span>
+                          <CreditCard size={16} />
+                          <span>Pay Balance via Razorpay Gateway</span>
                         </button>
                       </div>
                     </div>
@@ -2970,13 +2987,13 @@ export const BuyerDashboard = () => {
                     </div>
                   </div>
 
-                  {/* Escrow Simulator Verification Badge */}
+                  {/* Razorpay Escrow Verification Badge */}
                   <div className="p-3 rounded-xl bg-[#09111D] border border-[#1F3354] text-[10px] text-[#94A3B8] flex items-start gap-2.5">
                     <ShieldCheck size={18} className="text-emerald-400 shrink-0 mt-0.5" />
                     <div className="space-y-0.5">
-                      <strong className="text-white">Payment Method: RERA-Compliant Escrow Simulator</strong>
+                      <strong className="text-white">Payment Method: RERA-Compliant Razorpay Escrow Gateway</strong>
                       <p className="leading-relaxed">
-                        Authorized developer sandbox testing mode. Generates cryptographic HMAC-SHA256 signatures, updates your live property booking balance, and records a verified audit trail without external gateway redirection.
+                        Official Razorpay Secure Checkout. Encrypted 256-bit SSL transaction with instant cryptographic HMAC-SHA256 signature verification and automated property allotment.
                       </p>
                     </div>
                   </div>
@@ -2989,37 +3006,25 @@ export const BuyerDashboard = () => {
                     </div>
                   )}
 
-                  {/* Action Buttons */}
+                  {/* Action Buttons - EXCLUSIVELY RAZORPAY */}
                   <div className="space-y-2.5 pt-1">
                     <button
                       type="button"
                       disabled={paymentProcessing || payAmount <= 0}
-                      onClick={() => handleInitiatePayment(true)}
-                      className="w-full py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold shadow-lg shadow-emerald-700/20 transition flex items-center justify-center gap-2 disabled:opacity-50"
+                      onClick={() => handleInitiatePayment(false)}
+                      className="w-full py-3.5 rounded-xl bg-gradient-to-r from-[#C8814F] to-[#E09865] hover:opacity-95 text-white text-xs font-bold shadow-lg shadow-[#C8814F]/25 transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
                     >
-                      <ShieldCheck size={16} />
-                      <span>Confirm & Secure Pay ₹{payAmount.toLocaleString('en-IN')} via Escrow Simulator</span>
+                      <CreditCard size={16} />
+                      <span>Pay ₹{payAmount.toLocaleString('en-IN')} via Razorpay Gateway</span>
                     </button>
 
-                    <div className="flex items-center gap-3">
-                      <button
-                        type="button"
-                        onClick={() => setShowPaymentModal(false)}
-                        className="w-1/3 py-2.5 rounded-xl border border-[#1F3354] text-xs font-bold text-[#94A3B8] hover:bg-[#1E293B]"
-                      >
-                        Cancel
-                      </button>
-
-                      <button
-                        type="button"
-                        disabled={paymentProcessing || payAmount <= 0}
-                        onClick={() => handleInitiatePayment(false)}
-                        className="w-2/3 py-2.5 rounded-xl bg-[#0D1726] hover:bg-[#15233A] border border-[#1F3354] text-[#C8814F] hover:text-[#e09865] text-xs font-bold transition flex items-center justify-center gap-1.5 disabled:opacity-50"
-                      >
-                        <CreditCard size={14} />
-                        <span>Pay via Razorpay Gateway</span>
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setShowPaymentModal(false)}
+                      className="w-full py-2.5 rounded-xl border border-[#1F3354] text-xs font-bold text-[#94A3B8] hover:bg-[#1E293B] hover:text-white transition cursor-pointer"
+                    >
+                      Cancel
+                    </button>
                   </div>
                 </div>
               );

@@ -313,10 +313,29 @@ const getBookingsHandler = async (req, res) => {
   try {
     const where = {};
     if (req.user.role === 'BUYER') {
+      const userEmail = (req.user.email || '').toLowerCase().trim();
       const cleanPhone = (req.user.phone || '').replace(/[\s\-\(\)]/g, '');
-      const orConditions = [{ buyerEmail: req.user.email }];
-      if (cleanPhone.length >= 7) {
-        orConditions.push({ buyerPhone: { contains: cleanPhone.slice(-10) } });
+      const dummyPhones = ['1234567890', '0000000000', '9999999999', '1111111111', '9825012345', '9876543210'];
+      
+      const orConditions = [
+        { buyerEmail: { equals: userEmail, mode: 'insensitive' } },
+        { lead: { email: { equals: userEmail, mode: 'insensitive' } } }
+      ];
+
+      // Only match by phone if non-dummy and either buyerEmail matches or is unset
+      if (cleanPhone.length >= 10 && !dummyPhones.includes(cleanPhone.slice(-10))) {
+        orConditions.push({
+          AND: [
+            { buyerPhone: { contains: cleanPhone.slice(-10) } },
+            {
+              OR: [
+                { buyerEmail: null },
+                { buyerEmail: '' },
+                { buyerEmail: { equals: userEmail, mode: 'insensitive' } }
+              ]
+            }
+          ]
+        });
       }
       where.OR = orConditions;
     } else if (req.user.role === 'SALES_EXECUTIVE') {
