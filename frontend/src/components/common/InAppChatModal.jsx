@@ -24,8 +24,8 @@ export const InAppChatModal = ({
   onClose,
   conversationId: initialConvId = null,
   leadId = null,
-  participantName = 'Dedicated Advisor',
-  participantRole = 'Sales Executive'
+  participantName = 'Pooja Sharma (Senior Executive)',
+  participantRole = 'Senior Sales Executive'
 }) => {
   const { user } = useAuth();
   const [conversationId, setConversationId] = useState(initialConvId);

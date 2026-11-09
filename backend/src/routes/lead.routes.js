@@ -1,5 +1,6 @@
 const express = require('express');
 const router = express.Router();
+const jwt = require('jsonwebtoken');
 const { z } = require('zod');
 const prisma = require('../db/prisma');
 const { authenticateToken, requireRole } = require('../middleware/auth');
@@ -254,28 +255,67 @@ router.post('/', validateBody(createLeadSchema), async (req, res) => {
   try {
     const data = req.body;
 
-    // Duplicate detection: check if phone or email already exists
+    // Optional authentication detection for buyer inquiries
+    let authenticatedUser = null;
+    const authHeader = req.headers.authorization;
+    if (authHeader && authHeader.startsWith('Bearer ')) {
+      try {
+        const token = authHeader.split(' ')[1];
+        authenticatedUser = jwt.verify(token, process.env.JWT_SECRET || 'propassist_jwt_super_secure_secret_token_2026_xyz');
+      } catch (tokenErr) {}
+    }
+
+    const effectiveEmail = authenticatedUser?.email || (data.email ? data.email.toLowerCase().trim() : null);
+    const effectiveName = authenticatedUser?.name || data.fullName;
+
+    // Ensure assigned executive is Pooja Sharma (Senior Executive)
+    let assignedExecutiveId = data.assignedExecutiveId;
+    if (!assignedExecutiveId) {
+      const pooja = await prisma.user.findFirst({
+        where: { role: 'SALES_EXECUTIVE', name: { contains: 'Pooja' } }
+      });
+      if (pooja) {
+        assignedExecutiveId = pooja.id;
+      }
+    }
+
+    // Duplicate detection
     const trimmedPhone = data.phone.trim();
     const cleanDigits = data.phone.replace(/\D/g, '').slice(-10);
 
-    const existingDuplicate = await prisma.lead.findFirst({
-      where: {
-        OR: [
-          { phone: trimmedPhone },
-          { phone: { contains: cleanDigits.length >= 7 ? cleanDigits : trimmedPhone } },
-          ...(data.email ? [{ email: data.email.toLowerCase().trim() }] : [])
-        ]
-      },
-      include: {
-        assignedExecutive: { select: { id: true, name: true } },
-        project: { select: { id: true, name: true } }
-      }
-    });
+    let existingDuplicate = null;
+    if (authenticatedUser && effectiveEmail) {
+      // For authenticated buyers: check if this buyer already has an identical inquiry for the same project & BHK
+      existingDuplicate = await prisma.lead.findFirst({
+        where: {
+          email: effectiveEmail,
+          ...(data.projectId ? { projectId: data.projectId } : {}),
+          ...(data.preferredBhk ? { preferredBhk: data.preferredBhk } : {})
+        },
+        include: {
+          assignedExecutive: { select: { id: true, name: true } },
+          project: { select: { id: true, name: true } }
+        }
+      });
+    } else {
+      existingDuplicate = await prisma.lead.findFirst({
+        where: {
+          OR: [
+            { phone: trimmedPhone },
+            { phone: { contains: cleanDigits.length >= 7 ? cleanDigits : trimmedPhone } },
+            ...(effectiveEmail ? [{ email: effectiveEmail }] : [])
+          ]
+        },
+        include: {
+          assignedExecutive: { select: { id: true, name: true } },
+          project: { select: { id: true, name: true } }
+        }
+      });
+    }
 
     if (existingDuplicate) {
-      // If a registered buyer is updating their preferences, update gracefully instead of blocking with 409
-      const authHeader = req.headers.authorization;
-      if (authHeader) {
+      // Update gracefully if same buyer is refreshing preferences
+      if (authenticatedUser || authHeader) {
         const updatedLead = await prisma.lead.update({
           where: { id: existingDuplicate.id },
           data: {
@@ -283,14 +323,16 @@ router.post('/', validateBody(createLeadSchema), async (req, res) => {
             preferredBhk: data.preferredBhk || existingDuplicate.preferredBhk,
             budgetMin: data.budgetMin || existingDuplicate.budgetMin,
             budgetMax: data.budgetMax || existingDuplicate.budgetMax,
+            assignedExecutiveId: assignedExecutiveId || existingDuplicate.assignedExecutiveId,
             notes: data.notes ? `${existingDuplicate.notes ? existingDuplicate.notes + ' | ' : ''}${data.notes}` : existingDuplicate.notes
           },
           include: { project: true, assignedExecutive: true }
         });
-        return res.json({
+        return res.status(200).json({
           success: true,
           message: 'Inquiry preferences updated successfully',
-          lead: updatedLead
+          lead: updatedLead,
+          data: updatedLead
         });
       }
 
@@ -308,28 +350,17 @@ router.post('/', validateBody(createLeadSchema), async (req, res) => {
       });
     }
 
-    // Ensure default executive assignment is Pooja Sharma (Senior Executive)
-    let assignedExecutiveId = data.assignedExecutiveId;
-    if (!assignedExecutiveId) {
-      const pooja = await prisma.user.findFirst({
-        where: { role: 'SALES_EXECUTIVE', name: { contains: 'Pooja' } }
-      });
-      if (pooja) {
-        assignedExecutiveId = pooja.id;
-      }
-    }
-
     const newLead = await prisma.lead.create({
       data: {
-        fullName: data.fullName,
+        fullName: effectiveName || data.fullName,
         phone: data.phone,
-        email: data.email ? data.email.toLowerCase() : null,
+        email: effectiveEmail,
         budgetMin: data.budgetMin || null,
         budgetMax: data.budgetMax || null,
         preferredBhk: data.preferredBhk || null,
         preferredLocation: data.preferredLocation || null,
-        timeline: data.timeline || 'Exploring',
-        source: data.source || 'Manual Entry',
+        timeline: data.timeline || 'Within 3 Months',
+        source: data.source || 'Buyer Dashboard Inquiry',
         status: data.status || 'New',
         projectId: data.projectId || null,
         assignedExecutiveId: assignedExecutiveId || null,
@@ -349,16 +380,17 @@ router.post('/', validateBody(createLeadSchema), async (req, res) => {
         data: {
           leadId: newLead.id,
           executiveId: newLead.assignedExecutiveId,
-          assignedById: req.user ? req.user.id : null,
+          assignedById: authenticatedUser ? authenticatedUser.userId || authenticatedUser.id : null,
           reason: 'Initial assignment upon lead creation'
         }
-      });
+      }).catch(() => {});
     }
 
     return res.status(201).json({
       success: true,
       message: 'Lead created successfully',
-      lead: newLead
+      lead: newLead,
+      data: newLead
     });
   } catch (error) {
     console.error('Error creating lead:', error);

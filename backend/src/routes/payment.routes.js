@@ -77,7 +77,8 @@ router.post('/order', authenticateToken, async (req, res) => {
       data: {
         payment: paymentRecord,
         order: orderResult.order,
-        provider: orderResult.provider
+        provider: 'razorpay',
+        keyId: orderResult.keyId || razorpayService.getKeyId()
       }
     });
   } catch (err) {

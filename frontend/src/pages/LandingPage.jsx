@@ -285,7 +285,7 @@ export function LandingPage() {
         ...prev,
         {
           sender: 'ai',
-          text: '✅ Your request has been transferred to our senior sales executive (Rahul Sharma / Priya Patel). An executive will call your verified number within 2 minutes with complete project dossiers.'
+          text: '✅ Your request has been transferred to our senior sales executive (Pooja Sharma). An executive will call your verified number within 2 minutes with complete project dossiers.'
         }
       ]);
     } catch {
@@ -294,7 +294,7 @@ export function LandingPage() {
         ...prev,
         {
           sender: 'ai',
-          text: '✅ Human handoff registered. Senior Sales Executive Rahul Sharma has received your requirement and will connect with you shortly.'
+          text: '✅ Human handoff registered. Senior Sales Executive Pooja Sharma has received your requirement and will connect with you shortly.'
         }
       ]);
     } finally {

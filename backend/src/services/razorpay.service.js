@@ -1,67 +1,54 @@
 const crypto = require('crypto');
 
 /**
- * Razorpay Integration Service
- * Complies with strict signature verification, webhook validation, and idempotency
+ * Razorpay Integration Service (Production & Test Mode)
+ * Exclusively uses official Razorpay APIs with strict cryptographic HMAC-SHA256 verification
  */
 
-const KEY_ID = process.env.RAZORPAY_KEY_ID;
-const KEY_SECRET = process.env.RAZORPAY_KEY_SECRET;
+const KEY_ID = process.env.RAZORPAY_KEY_ID || 'rzp_test_TW1juKRTnACBhA';
+const KEY_SECRET = process.env.RAZORPAY_KEY_SECRET || 'j9ji6JfSl6HI8gQDCvEBhzMX';
 const WEBHOOK_SECRET = process.env.RAZORPAY_WEBHOOK_SECRET;
 
 /**
- * Create a new Razorpay Order
+ * Get active Razorpay Key ID
+ */
+function getKeyId() {
+  return KEY_ID;
+}
+
+/**
+ * Create a new Razorpay Order on official Razorpay Servers
  */
 async function createOrder({ amount, currency = 'INR', receipt, notes = {} }) {
-  // If valid test or live keys are provided, call official Razorpay API
-  if (KEY_ID && KEY_SECRET && !KEY_ID.includes('your_razorpay')) {
-    try {
-      const auth = Buffer.from(`${KEY_ID}:${KEY_SECRET}`).toString('base64');
-      const response = await fetch('https://api.razorpay.com/v1/orders', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Basic ${auth}`
-        },
-        body: JSON.stringify({
-          amount: Math.round(amount * 100), // amount in paise
-          currency,
-          receipt,
-          notes
-        })
-      });
+  const auth = Buffer.from(`${KEY_ID}:${KEY_SECRET}`).toString('base64');
+  const amountInPaise = Math.round(Number(amount) * 100);
 
-      if (response.ok) {
-        const order = await response.json();
-        return {
-          success: true,
-          provider: 'razorpay_live_or_test',
-          order
-        };
-      }
-    } catch (err) {
-      console.warn('[Razorpay API Network Error, falling back to local simulator]:', err.message);
-    }
-  }
-
-  // Local Verified Simulator (Idempotent Test Orders for Role Evaluation)
-  const simulatedOrderId = `order_${crypto.randomBytes(10).toString('hex')}`;
-  return {
-    success: true,
-    provider: 'local_razorpay_simulator (keys not configured in .env)',
-    order: {
-      id: simulatedOrderId,
-      entity: 'order',
-      amount: Math.round(amount * 100),
-      amount_paid: 0,
-      amount_due: Math.round(amount * 100),
+  const response = await fetch('https://api.razorpay.com/v1/orders', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Basic ${auth}`
+    },
+    body: JSON.stringify({
+      amount: amountInPaise,
       currency,
       receipt: receipt || `rcpt_${Date.now()}`,
-      status: 'created',
-      attempts: 0,
-      notes,
-      created_at: Math.floor(Date.now() / 1000)
-    }
+      notes
+    })
+  });
+
+  if (!response.ok) {
+    const errorText = await response.text();
+    console.error('[Razorpay Order Creation Failed]:', response.status, errorText);
+    throw new Error(`Razorpay API Error (${response.status}): ${errorText}`);
+  }
+
+  const order = await response.json();
+  return {
+    success: true,
+    provider: 'razorpay',
+    order,
+    keyId: KEY_ID
   };
 }
 
@@ -74,18 +61,24 @@ function verifyPaymentSignature({ orderId, razorpayPaymentId, razorpaySignature 
     return { isValid: false, reason: 'Missing orderId, razorpayPaymentId, or razorpaySignature' };
   }
 
-  const secret = KEY_SECRET || 'dev_secret_prop_assist_secure_2026';
-  const generatedSignature = crypto
-    .createHmac('sha256', secret)
+  const expectedSignature = crypto
+    .createHmac('sha256', KEY_SECRET)
     .update(`${orderId}|${razorpayPaymentId}`)
     .digest('hex');
 
-  // Also support simulator test signature format for clean role tests
-  const isMatch = generatedSignature === razorpaySignature || razorpaySignature === `sim_sig_${orderId}`;
+  let isMatch = false;
+  try {
+    isMatch = crypto.timingSafeEqual(
+      Buffer.from(expectedSignature, 'utf8'),
+      Buffer.from(razorpaySignature, 'utf8')
+    );
+  } catch {
+    isMatch = expectedSignature === razorpaySignature;
+  }
 
   return {
     isValid: isMatch,
-    generatedSignature,
+    expectedSignature,
     providedSignature: razorpaySignature
   };
 }
@@ -95,7 +88,6 @@ function verifyPaymentSignature({ orderId, razorpayPaymentId, razorpaySignature 
  */
 function verifyWebhookSignature(payloadString, webhookSignature) {
   if (!WEBHOOK_SECRET) {
-    // If webhook secret not set, reject in production or allow in local dev mode
     return process.env.NODE_ENV !== 'production';
   }
 
@@ -108,6 +100,7 @@ function verifyWebhookSignature(payloadString, webhookSignature) {
 }
 
 module.exports = {
+  getKeyId,
   createOrder,
   verifyPaymentSignature,
   verifyWebhookSignature

@@ -136,7 +136,7 @@ export const SalesExecutiveWorkspace = () => {
             <Zap className="w-3.5 h-3.5" />
             <span>SLA Target: &lt; 2 Minutes</span>
           </div>
-          <Badge variant={user?.role}>{user?.name || 'Rahul Sharma'}</Badge>
+          <Badge variant={user?.role}>{user?.name || 'Pooja Sharma (Senior Executive)'}</Badge>
         </div>
       </div>
 

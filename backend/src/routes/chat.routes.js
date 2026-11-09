@@ -129,12 +129,18 @@ router.get('/conversations', authenticateToken, async (req, res) => {
 
 /**
  * POST /api/chat/conversations/initiate
- * Ensure an in-app conversation exists for a lead/buyer
+ * Ensure an in-app conversation exists for a lead/buyer with Sales Executive Pooja Sharma
  */
 router.post('/conversations/initiate', authenticateToken, async (req, res) => {
   try {
     const { leadId, projectId } = req.body;
     let targetLeadId = leadId;
+
+    // Find Sales Executive Pooja Sharma
+    const pooja = await prisma.user.findFirst({
+      where: { role: 'SALES_EXECUTIVE', name: { contains: 'Pooja' } }
+    });
+    const poojaId = pooja?.id || '7aa5f616-116b-43f6-a0a1-3fe0b90b9cb2';
 
     if (!targetLeadId && req.user.role === 'BUYER') {
       const cleanPhone = (req.user.phone || '').replace(/\D/g, '').slice(-10);
@@ -148,7 +154,6 @@ router.post('/conversations/initiate', authenticateToken, async (req, res) => {
       });
 
       if (!existingLead) {
-        const defaultExec = await prisma.user.findFirst({ where: { role: 'SALES_EXECUTIVE' } });
         existingLead = await prisma.lead.create({
           data: {
             fullName: req.user.name || 'Valued Homebuyer',
@@ -156,8 +161,13 @@ router.post('/conversations/initiate', authenticateToken, async (req, res) => {
             phone: req.user.phone || '+919876543210',
             source: 'In-App Direct Chat',
             projectId: projectId || null,
-            assignedExecutiveId: defaultExec?.id || null
+            assignedExecutiveId: poojaId
           }
+        });
+      } else if (!existingLead.assignedExecutiveId) {
+        existingLead = await prisma.lead.update({
+          where: { id: existingLead.id },
+          data: { assignedExecutiveId: poojaId }
         });
       }
       targetLeadId = existingLead.id;
@@ -165,6 +175,15 @@ router.post('/conversations/initiate', authenticateToken, async (req, res) => {
 
     if (!targetLeadId) {
       return res.status(400).json({ success: false, error: 'Lead ID is required' });
+    }
+
+    // Ensure the targeted lead has an assigned executive (defaulting to Pooja Sharma)
+    const currentLead = await prisma.lead.findUnique({ where: { id: targetLeadId } });
+    if (currentLead && !currentLead.assignedExecutiveId) {
+      await prisma.lead.update({
+        where: { id: targetLeadId },
+        data: { assignedExecutiveId: poojaId }
+      }).catch(() => {});
     }
 
     // Find existing conversation for this lead

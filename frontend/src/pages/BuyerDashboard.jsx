@@ -122,6 +122,7 @@ export const BuyerDashboard = () => {
   const [enqProject, setEnqProject] = useState('proj-grand-orchid');
   const [enqBhk, setEnqBhk] = useState('3 BHK');
   const [enqBudget, setEnqBudget] = useState('1.5 Cr');
+  const [enqPhone, setEnqPhone] = useState('');
   const [enqSubmitting, setEnqSubmitting] = useState(false);
 
   const RERA_PROJECT_DOSSIERS = {
@@ -464,19 +465,31 @@ export const BuyerDashboard = () => {
     e.preventDefault();
     setEnqSubmitting(true);
     try {
+      const contactPhone = (enqPhone || user?.phone || '9825099887').replace(/\s/g, '');
       const res = await api.post('/leads', {
         fullName: user?.name || 'Verified Buyer',
         email: user?.email,
-        phone: user?.phone || '+918530493687',
+        phone: contactPhone,
         projectId: enqProject,
         preferredBhk: enqBhk,
         timeline: 'Within 3 Months',
         source: 'Buyer Dashboard Inquiry',
         notes: `Buyer submitted preference for ${enqBhk} in ${enqProject === 'proj-grand-orchid' ? 'The Grand Orchid' : 'Serene Meadows'} (Budget: ${enqBudget})`
       });
-      if (res.data.success) {
+      if (res.data?.success) {
+        const createdLead = res.data.lead || res.data.data;
+        if (createdLead) {
+          setEnquiries(prev => {
+            const exists = prev.some(item => item.id === createdLead.id);
+            if (exists) {
+              return prev.map(item => item.id === createdLead.id ? { ...item, ...createdLead } : item);
+            }
+            return [createdLead, ...prev];
+          });
+          setTargetLead(createdLead);
+        }
         setShowEnquiryModal(false);
-        await fetchBuyerData();
+        await fetchBuyerData(true);
       }
     } catch (err) {
       alert(err.response?.data?.error || 'Failed to submit inquiry');
@@ -485,7 +498,7 @@ export const BuyerDashboard = () => {
     }
   };
 
-  const handleInitiatePayment = async (forceSimulator = false) => {
+  const handleInitiatePayment = async () => {
     setPaymentProcessing(true);
     setPaymentError('');
     setPaymentSuccessMsg('');
@@ -614,91 +627,65 @@ export const BuyerDashboard = () => {
         }
       };
 
-      // Check if this is a genuine Razorpay order created on Razorpay API servers
-      const isRealRazorpayOrder =
-        !forceSimulator &&
-        provider === 'razorpay_live_or_test' &&
-        order?.id &&
-        !order.id.startsWith('order_04') &&
-        order.id.length < 25;
+      // 3. Dynamically load official Razorpay SDK
+      const loadRazorpay = () => {
+        return new Promise((resolve) => {
+          if (window.Razorpay) return resolve(true);
+          const script = document.createElement('script');
+          script.src = 'https://checkout.razorpay.com/v1/checkout.js';
+          script.onload = () => resolve(true);
+          script.onerror = () => resolve(false);
+          document.body.appendChild(script);
+        });
+      };
 
-      if (!forceSimulator && isRealRazorpayOrder) {
-        // 3. Dynamically load official Razorpay script
-        const loadRazorpay = () => {
-          return new Promise((resolve) => {
-            if (window.Razorpay) return resolve(true);
-            const script = document.createElement('script');
-            script.src = 'https://checkout.razorpay.com/v1/checkout.js';
-            script.onload = () => resolve(true);
-            script.onerror = () => resolve(false);
-            document.body.appendChild(script);
-          });
-        };
+      const razorpayLoaded = await loadRazorpay();
 
-        const razorpayLoaded = await loadRazorpay();
-
-        if (razorpayLoaded && window.Razorpay) {
-          const cleanPhone = (user?.phone || '').replace(/[\s\-\(\)]/g, '');
-          const validContact = /^[6-9]\d{9}$/.test(cleanPhone) ? cleanPhone : '9825012345';
-
-          const options = {
-            key: 'rzp_test_TW1juKRTnACBhA',
-            amount: order.amount,
-            currency: 'INR',
-            name: 'PropAssist AI Real Estate',
-            description: `Token Deposit for ${chosenUnit.projectName} (${chosenUnit.unitNumber})`,
-            order_id: order.id,
-            handler: async (response) => {
-              await finalizePayment({
-                orderId: response.razorpay_order_id,
-                razorpayPaymentId: response.razorpay_payment_id,
-                razorpaySignature: response.razorpay_signature,
-                paymentId: payment.id
-              });
-            },
-            prefill: {
-              name: user?.name || 'Valued Homebuyer',
-              email: user?.email || '',
-              contact: validContact
-            },
-            theme: { color: '#C8814F' },
-            modal: {
-              ondismiss: () => {
-                setPaymentProcessing(false);
-                setEscrowStep('review');
-              }
-            }
-          };
-
-          const rzp = new window.Razorpay(options);
-          rzp.on('payment.failed', async (err) => {
-            console.warn('[Razorpay] Payment failed, falling back to verified simulator:', err.error?.description);
-            try {
-              await finalizePayment({
-                orderId: order.id,
-                razorpayPaymentId: `pay_test_${Date.now()}`,
-                razorpaySignature: `sim_sig_${order.id}`,
-                paymentId: payment.id
-              });
-            } catch (simErr) {
-              setPaymentError(simErr.message || 'Payment simulation failed.');
-              setEscrowStep('failed');
-            } finally {
-              setPaymentProcessing(false);
-            }
-          });
-          rzp.open();
-          return;
-        }
+      if (!razorpayLoaded || !window.Razorpay) {
+        throw new Error('Unable to initialize Razorpay Secure Checkout. Please check your internet connection.');
       }
 
-      // Fast fallback to verified cryptographic simulator
-      await finalizePayment({
-        orderId: order.id,
-        razorpayPaymentId: `pay_test_${Date.now()}`,
-        razorpaySignature: `sim_sig_${order.id}`,
-        paymentId: payment.id
+      const cleanPhone = (user?.phone || '').replace(/[\s\-\(\)]/g, '');
+      const validContact = /^[6-9]\d{9}$/.test(cleanPhone) ? cleanPhone : '9825012345';
+      const razorpayKey = orderRes.data?.data?.keyId || 'rzp_test_TW1juKRTnACBhA';
+
+      const options = {
+        key: razorpayKey,
+        amount: order.amount,
+        currency: 'INR',
+        name: 'PropAssist AI Real Estate',
+        description: `Token Deposit for ${chosenUnit.projectName} (${chosenUnit.unitNumber})`,
+        order_id: order.id,
+        handler: async (response) => {
+          await finalizePayment({
+            orderId: response.razorpay_order_id,
+            razorpayPaymentId: response.razorpay_payment_id,
+            razorpaySignature: response.razorpay_signature,
+            paymentId: payment.id
+          });
+        },
+        prefill: {
+          name: user?.name || 'Valued Homebuyer',
+          email: user?.email || '',
+          contact: validContact
+        },
+        theme: { color: '#C8814F' },
+        modal: {
+          ondismiss: () => {
+            setPaymentProcessing(false);
+            setEscrowStep('review');
+          }
+        }
+      };
+
+      const rzp = new window.Razorpay(options);
+      rzp.on('payment.failed', (err) => {
+        console.error('[Razorpay Payment Failed]:', err.error);
+        setPaymentError(err.error?.description || 'Razorpay payment was not completed.');
+        setPaymentProcessing(false);
+        setEscrowStep('failed');
       });
+      rzp.open();
     } catch (err) {
       console.error('Payment error:', err);
       setPaymentError(err.response?.data?.error || err.message || 'Payment initiation failed.');
@@ -788,7 +775,7 @@ export const BuyerDashboard = () => {
       id: `notif-enq-${e.id}`,
       type: 'enquiry',
       title: 'Sales Advisor Assigned to Your Enquiry',
-      message: `Your preference for ${e.preferredBhk || 'Luxury Residence'} in ${e.project?.name || 'Ahmedabad'} is assigned to ${e.assignedExecutive?.name || 'Rahul Sharma'}.`,
+      message: `Your preference for ${e.preferredBhk || 'Luxury Residence'} in ${e.project?.name || 'Ahmedabad'} is assigned to ${e.assignedExecutive?.name || 'Pooja Sharma (Senior Executive)'}.`,
       date: e.createdAt || new Date().toISOString(),
       actionTab: 'enquiries',
       actionLabel: 'View Advisory'
@@ -1006,7 +993,7 @@ export const BuyerDashboard = () => {
                     <div>
                       <span className="text-[10px] text-[#64748B] block">Host Executive</span>
                       <strong className="text-[#CBD5E1]">
-                        {bookings[0].slot?.assignedExecutive?.name || 'Rahul Sharma (Senior Lead)'}
+                        {bookings[0].slot?.assignedExecutive?.name || 'Pooja Sharma (Senior Executive)'}
                       </strong>
                     </div>
                   </div>
@@ -1265,7 +1252,7 @@ export const BuyerDashboard = () => {
                     </div>
                     <div>
                       <span className="text-[10px] text-[#64748B] block">Assigned Advisor</span>
-                      <strong className="text-white">{b.slot?.assignedExecutive?.name || 'Rahul Sharma'}</strong>
+                      <strong className="text-white">{b.slot?.assignedExecutive?.name || 'Pooja Sharma (Senior Executive)'}</strong>
                     </div>
                   </div>
                 </div>
@@ -2625,8 +2612,8 @@ export const BuyerDashboard = () => {
       <WhatsAppChatModal
         isOpen={isWhatsAppOpen}
         onClose={() => setIsWhatsAppOpen(false)}
-        recipientName={targetLead?.assignedExecutive?.name || 'Rahul Sharma (Senior Advisor)'}
-        recipientPhone={targetLead?.assignedExecutive?.phone || '+917900000000'}
+        recipientName="Pooja Sharma (Senior Executive)"
+        recipientPhone={targetLead?.assignedExecutive?.phone || '+919825054321'}
         recipientRole="Sales Advisor"
         leadId={targetLead?.id}
         defaultTemplate="buyer_enquiry"
@@ -2638,15 +2625,15 @@ export const BuyerDashboard = () => {
         onClose={() => setIsVideoModalOpen(false)}
         leadId={targetLead?.id}
         projectId={targetLead?.projectId}
-        executiveName={targetLead?.assignedExecutive?.name || 'Rahul Sharma'}
+        executiveName="Pooja Sharma (Senior Executive)"
       />
 
       <InAppChatModal
         isOpen={isInAppChatOpen}
         onClose={() => setIsInAppChatOpen(false)}
         leadId={targetLead?.id}
-        participantName={targetLead?.assignedExecutive?.name || 'Rahul Sharma (Sales Advisor)'}
-        participantRole="Assigned Advisor"
+        participantName="Pooja Sharma (Senior Executive)"
+        participantRole="Senior Sales Executive"
       />
 
       {/* Reschedule Visit Modal */}
@@ -2768,6 +2755,17 @@ export const BuyerDashboard = () => {
                     <option value="1.75 Cr+">₹1.75 Cr+</option>
                   </select>
                 </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-[#A3AEC0] block mb-1">Contact Phone</label>
+                <input
+                  type="tel"
+                  value={enqPhone || user?.phone || ''}
+                  onChange={(e) => setEnqPhone(e.target.value)}
+                  placeholder="+91 98250 99887"
+                  className="w-full bg-[#0D1726] border border-[#1F3354] rounded-xl p-3 text-xs text-white focus:outline-none focus:border-[#C8814F]"
+                />
               </div>
 
               <div className="p-3 rounded-xl bg-[#0D1726] border border-[#1F3354] text-[11px] text-[#94A3B8]">
@@ -3011,7 +3009,7 @@ export const BuyerDashboard = () => {
                     <button
                       type="button"
                       disabled={paymentProcessing || payAmount <= 0}
-                      onClick={() => handleInitiatePayment(false)}
+                      onClick={() => handleInitiatePayment()}
                       className="w-full py-3.5 rounded-xl bg-gradient-to-r from-[#C8814F] to-[#E09865] hover:opacity-95 text-white text-xs font-bold shadow-lg shadow-[#C8814F]/25 transition flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
                     >
                       <CreditCard size={16} />
